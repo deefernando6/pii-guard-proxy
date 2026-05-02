@@ -1,0 +1,76 @@
+Loading english_validation.jsonl...
+Loaded 7946 entries
+Running detectPII on each source_text and matching against privacy_mask spans...
+  1000/7946  2000/7946  3000/7946  4000/7946  5000/7946  6000/7946  7000/7946
+
+Processed 7946 entries in 0.3s (31039 entries/s)
+
+## STRICT (exact span match)
+  TYPE-AWARE  precision=48.78%  recall=15.26%  F1=23.24%   (tp=7809, fp=8200, fn=43375)
+  ANY-TYPE    precision=81.50%  recall=25.49%  F1=38.84%   (tp=13048, fp=2961, fn=38136)
+
+  Per-gold-label recall (type-aware):
+  label            recall     tp     fn covered?
+  BOD             12.86%     298   2019  yes
+  BUILDING         0.00%       0   1943  yes
+  CARDISSUER       0.00%       0      1  no (out-of-scope for regex)
+  CITY             0.00%       0   2017  yes
+  COUNTRY          0.00%       0   1565  yes
+  DATE             0.76%      13   1689  yes
+  DRIVERLICENSE    0.00%       0   2420  no (out-of-scope for regex)
+  EMAIL           93.49%    2442    170  yes
+  GEOCOORD         0.00%       0    216  no (out-of-scope for regex)
+  GIVENNAME1       7.83%     158   1861  yes
+  GIVENNAME2       2.78%      15    524  yes
+  IDCARD           7.64%     203   2453  yes
+  IP              77.05%    1669    497  yes
+  LASTNAME1        9.06%     219   2197  yes
+  LASTNAME2        2.84%      18    616  yes
+  LASTNAME3        1.50%       3    197  yes
+  PASS            17.90%     290   1330  yes
+  PASSPORT         3.47%      84   2340  yes
+  POSTCODE         0.00%       0   1907  yes
+  SECADDRESS       0.00%       0    859  yes
+  SEX              0.00%       0   2010  no (out-of-scope for regex)
+  SOCIALNUMBER    34.42%     879   1675  yes
+  STATE            0.00%       0   2002  yes
+  STREET           0.10%       2   1908  yes
+  TEL             75.91%    1516    481  yes
+  TIME             0.00%       0   3766  no (out-of-scope for regex)
+  TITLE            0.00%       0   1926  no (out-of-scope for regex)
+  USERNAME         0.00%       0   2786  no (out-of-scope for regex)
+
+## LENIENT (any-overlap span match)
+  TYPE-AWARE  precision=54.33%  recall=16.99%  F1=25.89%   (tp=8698, fp=7311, fn=42486)
+  ANY-TYPE    precision=92.00%  recall=28.77%  F1=43.84%   (tp=14728, fp=1281, fn=36456)
+
+  Per-gold-label recall (type-aware):
+  label            recall     tp     fn covered?
+  BOD             12.99%     301   2016  yes
+  BUILDING         2.62%      51   1892  yes
+  CARDISSUER       0.00%       0      1  no (out-of-scope for regex)
+  CITY             0.00%       0   2017  yes
+  COUNTRY          0.00%       0   1565  yes
+  DATE             0.76%      13   1689  yes
+  DRIVERLICENSE    0.00%       0   2420  no (out-of-scope for regex)
+  EMAIL           99.69%    2604      8  yes
+  GEOCOORD         0.00%       0    216  no (out-of-scope for regex)
+  GIVENNAME1      13.57%     274   1745  yes
+  GIVENNAME2       3.71%      20    519  yes
+  IDCARD           7.72%     205   2451  yes
+  IP              77.42%    1677    489  yes
+  LASTNAME1       13.91%     336   2080  yes
+  LASTNAME2        3.63%      23    611  yes
+  LASTNAME3        2.00%       4    196  yes
+  PASS            22.53%     365   1255  yes
+  PASSPORT         3.47%      84   2340  yes
+  POSTCODE         0.00%       0   1907  yes
+  SECADDRESS       0.00%       0    859  yes
+  SEX              0.00%       0   2010  no (out-of-scope for regex)
+  SOCIALNUMBER    34.49%     881   1673  yes
+  STATE            0.00%       0   2002  yes
+  STREET           0.21%       4   1906  yes
+  TEL             92.94%    1856    141  yes
+  TIME             0.00%       0   3766  no (out-of-scope for regex)
+  TITLE            0.00%       0   1926  no (out-of-scope for regex)
+  USERNAME         0.00%       0   2786  no (out-of-scope for regex)
