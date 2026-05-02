@@ -1,0 +1,258 @@
+#!/bin/sh
+set -e
+cd /
+. /usr/share/debconf/confmodule
+
+case "$1" in
+  configure)
+    # ─── 1. Read user selections ────────────────────────────────────────
+    db_get pii-guard-proxy/modes || true
+    # debconf multiselect returns ", "-separated values; normalize to ","
+    # so the case-pattern matches below work reliably.
+    MODES=$(printf '%s' "${RET:-claude-code}" | tr -d ' ')
+    db_get pii-guard-proxy/install-deps || true
+    INSTALL_DEPS="${RET:-true}"
+    db_get pii-guard-proxy/detection-mode || true
+    DETECTION_MODE="${RET:-regex-only}"
+    echo "[pii-guard-proxy] Selected modes: $MODES"
+    echo "[pii-guard-proxy] Detection engine: $DETECTION_MODE"
+
+    # ─── 2. Figure out what's missing — DON'T install inline ────────────
+    # apt-get cannot acquire the lock from inside dpkg's postinst, so we
+    # collect the list and hand it off to a deferred background helper.
+    DEFERRED_APT=""
+    HAVE_NODE=0
+    if command -v node >/dev/null 2>&1; then
+      NV=$(node -e 'console.log(parseInt(process.version.slice(1)))' 2>/dev/null || echo 0)
+      [ "$NV" -ge 18 ] && HAVE_NODE=1
+    fi
+    if [ "$HAVE_NODE" = "0" ]; then
+      DEFERRED_APT="$DEFERRED_APT nodejs"
+    fi
+
+    NEEDS_NSS=0
+    case ",$MODES," in *,browser,*) NEEDS_NSS=1 ;; esac
+    if [ "$NEEDS_NSS" = "1" ] && ! command -v certutil >/dev/null 2>&1; then
+      DEFERRED_APT="$DEFERRED_APT libnss3-tools"
+    fi
+
+    if [ -n "$DEFERRED_APT" ] && [ "$INSTALL_DEPS" != "true" ]; then
+      echo "[pii-guard-proxy] Auto-install disabled. Missing:$DEFERRED_APT"
+      echo "[pii-guard-proxy] Install them, then run: sudo systemctl restart pii-guard-proxy"
+      DEFERRED_APT=""
+    fi
+
+    # ─── 3. Service user + cert dir ─────────────────────────────────────
+    if ! getent passwd pii-guard >/dev/null; then
+      adduser --system --quiet --group --no-create-home \
+        --home /etc/pii-guard --shell /usr/sbin/nologin \
+        --gecos "PII Guard service" pii-guard
+    fi
+    install -d -m 0750 -o pii-guard -g pii-guard /etc/pii-guard
+
+    # Seed the optional custom contacts file. The detector reads this on
+    # service start and treats every name listed here as PII regardless
+    # of context. Created only on first install — user edits survive
+    # subsequent upgrades.
+    if [ ! -f /etc/pii-guard/contacts.txt ]; then
+      cat > /etc/pii-guard/contacts.txt <<'CONTACTS'
+# Custom name list — detected as PII regardless of surrounding context.
+#
+# One name per line. Empty lines and lines starting with `#` are ignored.
+# Multi-word entries match the full phrase only; add common variants on
+# separate lines if needed:
+#
+#   Sarah Johnson
+#   Sarah
+#   Bob
+#   Mike Chen
+#
+# Edit with sudo, then restart the service:
+#   sudo systemctl restart pii-guard-proxy
+CONTACTS
+      chown root:pii-guard /etc/pii-guard/contacts.txt
+      chmod 0644 /etc/pii-guard/contacts.txt
+    fi
+
+    # Seed the CLI-managed runtime env file. Created only on first install
+    # (won't overwrite the user's `pii-guard placeholder-replace ...` choice
+    # on a later upgrade).
+    if [ ! -f /etc/pii-guard/runtime.env ]; then
+      cat > /etc/pii-guard/runtime.env <<'RUNTIME'
+# Managed by `pii-guard` CLI. Edit through the CLI rather than directly:
+#   sudo pii-guard placeholder-replace enable|disable
+#
+# These settings override /etc/default/pii-guard-proxy.
+PII_GUARD_REVEAL=true
+RUNTIME
+      chmod 0644 /etc/pii-guard/runtime.env
+    fi
+
+    # ─── 4. CA generation (only if node is here right now) ──────────────
+    if [ "$HAVE_NODE" = "1" ]; then
+      if [ ! -f /etc/pii-guard/ca-cert.pem ] || [ ! -f /etc/pii-guard/ca-key.pem ]; then
+        echo "[pii-guard-proxy] Generating root CA..."
+        PII_GUARD_CA_DIR=/etc/pii-guard /usr/bin/node -e \
+          "require('/usr/lib/pii-guard-proxy/lib/cert-manager').ensureCa()"
+        chown pii-guard:pii-guard /etc/pii-guard/ca-cert.pem /etc/pii-guard/ca-key.pem
+        chmod 0644 /etc/pii-guard/ca-cert.pem
+        chmod 0600 /etc/pii-guard/ca-key.pem
+      fi
+      if [ ! -f /usr/local/share/ca-certificates/pii-guard.crt ]; then
+        install -m 0644 /etc/pii-guard/ca-cert.pem /usr/local/share/ca-certificates/pii-guard.crt
+        update-ca-certificates >/dev/null 2>&1 || true
+      fi
+    else
+      echo "[pii-guard-proxy] Node.js not yet present — CA will be generated after deps install."
+    fi
+
+    # ─── 5. Apply mode configurations ───────────────────────────────────
+    # Reset every mode marker. The systemd ExecStartPost hook (mode-config.sh)
+    # will materialise profile.d files and Chrome policies based on the
+    # markers we set below; ExecStopPost will tear them down again on stop.
+    rm -f /etc/pii-guard/claude-code-mode-enabled
+    rm -f /etc/pii-guard/https-proxy-mode-enabled
+    rm -f /etc/pii-guard/browser-mode-enabled
+    # Old direct-write artifacts (kept here for clean upgrades from < 1.2.7).
+    rm -f /etc/profile.d/pii-guard-claude-code.sh
+    rm -f /etc/profile.d/pii-guard-https-proxy.sh
+
+    case ",$MODES," in *,claude-code,*)
+      touch /etc/pii-guard/claude-code-mode-enabled
+      chmod 0644 /etc/pii-guard/claude-code-mode-enabled
+      echo "[pii-guard-proxy]   ✓ Claude Code mode: marker set; profile.d entry installed by systemd hook"
+      ;;
+    esac
+
+    case ",$MODES," in *,https-proxy,*)
+      touch /etc/pii-guard/https-proxy-mode-enabled
+      chmod 0644 /etc/pii-guard/https-proxy-mode-enabled
+      echo "[pii-guard-proxy]   ✓ HTTPS_PROXY mode: marker set; profile.d entry installed by systemd hook"
+      ;;
+    esac
+
+    case ",$MODES," in *,browser,*)
+      touch /etc/pii-guard/browser-mode-enabled
+      chmod 0644 /etc/pii-guard/browser-mode-enabled
+      echo "[pii-guard-proxy]   ✓ Browser mode: marker set; policy installed by systemd hook"
+      ;;
+    esac
+
+    # Detection-engine marker. The proxy looks at this on startup to decide
+    # whether to load the ML pipeline. If hybrid was selected but the model
+    # files aren't downloaded yet (deferred), the proxy gracefully falls
+    # back to regex-only and tries to load the model again on the next
+    # restart after finish-install completes.
+    rm -f /etc/pii-guard/ml-detection-enabled
+    DEFER_ML=""
+    if [ "$DETECTION_MODE" = "hybrid" ]; then
+      touch /etc/pii-guard/ml-detection-enabled
+      chmod 0644 /etc/pii-guard/ml-detection-enabled
+      echo "[pii-guard-proxy]   ✓ Hybrid detection: marker set; model download queued"
+      DEFER_ML="hybrid"
+      install -d -m 0755 -o pii-guard -g pii-guard /var/lib/pii-guard/models
+    fi
+
+    # Per-user Chrome NSS trust: iterate every real user with a home
+    # directory so we don't depend on $SUDO_USER being set correctly.
+    TARGET_USER="${SUDO_USER:-${PKEXEC_UID:+$(getent passwd "$PKEXEC_UID" | cut -d: -f1)}}"
+    DEFER_NSS_TRUST=""
+    if [ "$NEEDS_NSS" = "1" ]; then
+      set +e
+      if command -v certutil >/dev/null 2>&1; then
+        for home in /home/*; do
+          [ -d "$home" ] || continue
+          user=$(basename "$home")
+          id "$user" >/dev/null 2>&1 || continue
+          if su - "$user" -c /usr/bin/pii-guard-trust-chrome >/dev/null 2>&1; then
+            echo "[pii-guard-proxy]     CA added to $user's Chrome NSS DB"
+          else
+            echo "[pii-guard-proxy]     CA add for $user failed (Chrome may be running)"
+          fi
+        done
+      else
+        # certutil not yet installed; the deferred installer handles it.
+        DEFER_NSS_TRUST="${TARGET_USER:-_all_}"
+      fi
+      set -e
+    fi
+
+    # ─── 6. Start service if node is here; else service starts after defer ─
+    if [ -d /run/systemd/system ]; then
+      systemctl daemon-reload || true
+      systemctl enable pii-guard-proxy.service >/dev/null 2>&1 || true
+      if [ "$HAVE_NODE" = "1" ]; then
+        systemctl restart pii-guard-proxy.service \
+          || echo "[pii-guard-proxy] Service failed — check 'journalctl -u pii-guard-proxy'"
+      fi
+    fi
+
+    # ─── 6b. If browser mode is active, SIGTERM running Chromium-family ──
+    # browsers so they pick up the just-installed managed policy on next
+    # launch. Only happens here (postinst) and in postrm — service start/
+    # stop and the `pii-guard` CLI NEVER kill browsers, so users don't
+    # lose tabs every time they restart the proxy or toggle a setting.
+    if [ "$NEEDS_NSS" = "1" ] && [ -x /usr/lib/pii-guard-proxy/kill-browsers.sh ]; then
+      /usr/lib/pii-guard-proxy/kill-browsers.sh || true
+    fi
+
+    # ─── 7. Defer apt install + remaining setup if anything is missing ──
+    if [ -n "$DEFERRED_APT" ] || [ -n "$DEFER_NSS_TRUST" ] || [ -n "$DEFER_ML" ]; then
+      echo ""
+      [ -n "$DEFERRED_APT" ] && echo "[pii-guard-proxy] Scheduling deferred install of:$DEFERRED_APT"
+      [ -n "$DEFER_ML" ] && echo "[pii-guard-proxy] Scheduling GLiNER model download (~50 MB)"
+      echo "[pii-guard-proxy] Watch progress:  tail -f /var/log/pii-guard-finish-install.log"
+
+      # The deferred installer must NOT be a child of dpkg — dpkg waits for
+      # any process that inherits its status pipe FD, which causes a deadlock
+      # because the deferred installer waits for dpkg's lock. systemd-run
+      # makes systemd the parent, breaking that cycle cleanly.
+      set +e
+      systemctl reset-failed pii-guard-finish-install.service >/dev/null 2>&1
+      systemctl stop          pii-guard-finish-install.service >/dev/null 2>&1
+      if command -v systemd-run >/dev/null 2>&1; then
+        systemd-run --no-block --collect --quiet \
+          --unit=pii-guard-finish-install \
+          --description="PII Guard - finalize install after dpkg releases its lock" \
+          /usr/lib/pii-guard-proxy/finish-install.sh \
+            "$DEFERRED_APT" "$DEFER_NSS_TRUST" "$DEFER_ML"
+      else
+        # Fallback for non-systemd environments (rare).
+        nohup setsid sh -c \
+          "exec /usr/lib/pii-guard-proxy/finish-install.sh \"\$1\" \"\$2\" \"\$3\"" \
+          _ "$DEFERRED_APT" "$DEFER_NSS_TRUST" "$DEFER_ML" \
+          </dev/null >/dev/null 2>&1 &
+      fi
+      set -e
+    fi
+
+    cat <<'BANNER'
+
+╔═══════════════════════════════════════════════════════════════╗
+║  PII Guard Proxy installed.                                   ║
+║                                                                ║
+║  Listening on:  http://127.0.0.1:8765                         ║
+║                                                                ║
+║  Manage with:                                                  ║
+║    pii-guard status                                            ║
+║    pii-guard log -f                                            ║
+║    sudo pii-guard placeholder-replace enable|disable           ║
+║    sudo pii-guard reconfigure                                  ║
+║                                                                ║
+║  Open a new shell (or run: source /etc/profile) to pick up    ║
+║  the env vars set by the active modes.                        ║
+╚═══════════════════════════════════════════════════════════════╝
+
+BANNER
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+  *)
+    echo "postinst called with unknown argument \`$1'" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

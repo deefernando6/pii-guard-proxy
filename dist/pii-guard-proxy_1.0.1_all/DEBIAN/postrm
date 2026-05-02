@@ -1,0 +1,83 @@
+#!/bin/sh
+set -e
+cd /
+
+remove_mode_files() {
+  rm -f /etc/profile.d/pii-guard-claude-code.sh
+  rm -f /etc/profile.d/pii-guard-https-proxy.sh
+  rm -f /etc/chromium/policies/managed/pii-guard.json
+  rm -f /etc/opt/chrome/policies/managed/pii-guard.json
+  rm -f /etc/brave/policies/managed/pii-guard.json
+  rm -f /etc/opt/edge/policies/managed/pii-guard.json
+  rm -f /etc/pii-guard/claude-code-mode-enabled
+  rm -f /etc/pii-guard/https-proxy-mode-enabled
+  rm -f /etc/pii-guard/browser-mode-enabled
+  rm -f /etc/pii-guard/ml-detection-enabled
+}
+
+# Snapshot whether browser policy was active BEFORE we remove anything,
+# so we can decide whether the user's running Chrome needs to be told
+# to drop its cached policy. Only relevant on remove/purge.
+had_browser_policy=0
+for f in /etc/chromium/policies/managed/pii-guard.json \
+         /etc/opt/chrome/policies/managed/pii-guard.json \
+         /etc/brave/policies/managed/pii-guard.json \
+         /etc/opt/edge/policies/managed/pii-guard.json; do
+  [ -f "$f" ] && had_browser_policy=1
+done
+
+case "$1" in
+  purge)
+    remove_mode_files
+    if [ -f /usr/local/share/ca-certificates/pii-guard.crt ]; then
+      rm -f /usr/local/share/ca-certificates/pii-guard.crt
+      update-ca-certificates --fresh >/dev/null 2>&1 || \
+        update-ca-certificates >/dev/null 2>&1 || true
+    fi
+    rm -rf /etc/pii-guard
+    rm -rf /var/lib/pii-guard
+    if getent passwd pii-guard >/dev/null; then
+      deluser --quiet pii-guard >/dev/null 2>&1 || true
+    fi
+    if command -v debconf-communicate >/dev/null 2>&1; then
+      echo PURGE | debconf-communicate pii-guard-proxy >/dev/null 2>&1 || true
+    fi
+    ;;
+
+  remove)
+    # Remove activation files but keep CA + cert dir until purge
+    remove_mode_files
+    ;;
+
+  upgrade|failed-upgrade|abort-install|abort-upgrade|disappear) ;;
+  *) echo "postrm called with unknown argument \`$1'" >&2; exit 1 ;;
+esac
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+
+# On remove/purge, if a browser managed-policy was active when we
+# started, SIGTERM running Chromium-family browsers so they drop the
+# cached policy on next launch. /usr/lib/pii-guard-proxy/ is gone by
+# now (the package files are removed before postrm fires), so we can't
+# call kill-browsers.sh — inline the equivalent pkills. Honours the
+# same env override that postinst respects.
+if { [ "$1" = "remove" ] || [ "$1" = "purge" ]; } && [ "$had_browser_policy" = "1" ]; then
+  KILL="true"
+  if [ -r /etc/default/pii-guard-proxy ]; then
+    . /etc/default/pii-guard-proxy
+    KILL="${PII_GUARD_KILL_BROWSERS_ON_POLICY_CHANGE:-true}"
+  fi
+  case "$KILL" in
+    false|0|no|off|FALSE|False) ;;
+    *)
+      pkill -TERM -f '/opt/google/chrome'    >/dev/null 2>&1 || true
+      pkill -TERM -f '/usr/lib/chromium'     >/dev/null 2>&1 || true
+      pkill -TERM -f '/opt/brave.com'        >/dev/null 2>&1 || true
+      pkill -TERM -f '/opt/microsoft/msedge' >/dev/null 2>&1 || true
+      ;;
+  esac
+fi
+
+exit 0
