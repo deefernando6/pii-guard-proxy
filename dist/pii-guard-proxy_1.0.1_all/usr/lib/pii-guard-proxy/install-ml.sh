@@ -64,10 +64,10 @@ install -d -m 0755 -o pii-guard -g pii-guard "$MODEL_DIR"
 install -d -m 0755 -o pii-guard -g pii-guard "$MODEL_DIR/onnx"
 
 # Files we need.  GLiNER ships an INT8-quantized variant
-# (model_quantized.onnx) which is the ~50 MB target referenced in the
+# (model_quint8.onnx) which is the ~50 MB target referenced in the
 # debconf warning. We grab that plus the metadata.
 FILES_ROOT="config.json tokenizer.json tokenizer_config.json special_tokens_map.json gliner_config.json"
-FILES_ONNX="onnx/model_quantized.onnx"
+FILES_ONNX="onnx/model_quint8.onnx"
 
 fetch() {
   rel="$1"

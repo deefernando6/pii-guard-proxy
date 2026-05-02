@@ -103,7 +103,7 @@ function modelFilesPresent() {
   try {
     return fs.existsSync(path.join(MODEL_DIR, 'config.json'))
         && fs.existsSync(path.join(MODEL_DIR, 'tokenizer.json'))
-        && fs.existsSync(path.join(MODEL_DIR, 'onnx', 'model_quantized.onnx'));
+        && fs.existsSync(path.join(MODEL_DIR, 'onnx', 'model_quint8.onnx'));
   } catch (_) { return false; }
 }
 
