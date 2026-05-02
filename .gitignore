@@ -1,0 +1,13 @@
+# Top-level dev-time deps only — re-installed via `npm install`.
+/node_modules/
+
+# Older release artifacts — kept on disk for reference, not in git.
+dist/pii-guard-proxy_1.1*
+dist/pii-guard-proxy_1.2*
+
+# Local editor / OS junk
+.DS_Store
+*.log
+*.swp
+.vscode/
+.idea/

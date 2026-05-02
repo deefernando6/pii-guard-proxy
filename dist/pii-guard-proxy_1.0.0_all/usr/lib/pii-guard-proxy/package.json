@@ -1,0 +1,19 @@
+{
+  "name": "pii-guard-proxy",
+  "version": "1.0.0",
+  "description": "Local HTTPS-fronting proxy that scans Claude Code (and other Anthropic API) requests for PII before they leave your machine.",
+  "main": "proxy.js",
+  "bin": {
+    "pii-guard-proxy": "./proxy.js"
+  },
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-forge": "^1.4.0"
+  }
+}

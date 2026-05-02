@@ -1,0 +1,22 @@
+Package: pii-guard-proxy
+Version: 1.0.0
+Section: net
+Priority: optional
+Architecture: all
+Pre-Depends: debconf (>= 0.5) | debconf-2.0
+Depends: adduser, ca-certificates
+Recommends: nodejs (>= 18), libnss3-tools
+Maintainer: PII Guard <pii-guard@local>
+Homepage: https://localhost
+Description: Local PII anonymization proxy for LLM traffic
+ PII Guard Proxy is a local HTTPS-fronting proxy that detects and anonymizes
+ personally identifiable information in prompts before they reach LLM services.
+ .
+ During installation you choose which mode(s) to activate:
+   * Claude Code / Anthropic SDK  (sets ANTHROPIC_BASE_URL system-wide)
+   * Any CLI / SDK                (sets HTTPS_PROXY system-wide)
+   * Browser                      (Chrome/Chromium managed policy + NSS trust)
+ .
+ Missing runtime packages (nodejs, libnss3-tools) are installed automatically
+ by the postinst script, so a plain "dpkg -i" works end-to-end without any
+ follow-up commands.
