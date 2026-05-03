@@ -6,6 +6,7 @@ const https = require('https');
 const tls = require('tls');
 const net = require('net');
 const { detectPII } = require('./lib/detector');
+const { detectSupplementary } = require('./lib/supplementary-detector');
 const { detectPIIWithMl, mlStatus } = require('./lib/ml-detector');
 const { placeholderFor } = require('./lib/anonymizer');
 const { promptUser } = require('./prompt');
@@ -96,12 +97,19 @@ async function anonymizeText(text) {
   if (!text || typeof text !== 'string') {
     return { text, substitutions: 0, newEntries: [] };
   }
-  // Run both detectors in parallel. detectPIIWithMl is a no-op when
-  // hybrid mode is off, so the cost is one promise allocation.
-  const [regexDet, mlDet] = await Promise.all([
+  // Three detectors layered together. lib/detector.js is the original
+  // ~30 hand-tuned patterns (emails, phones, IPs, API keys, etc.).
+  // lib/supplementary-detector.js targets dataset-shaped categories
+  // regex couldn't reach in v1.0 (TIME, TITLE, SEX, addresses, JSON/
+  // YAML/XML/markdown structured fields). lib/ml-detector.js runs
+  // GLiNER PII Small INT8 when the model files are present, otherwise
+  // returns []. Regex always wins overlaps; ML fills the gaps.
+  const [regexBase, regexSupp, mlDet] = await Promise.all([
     Promise.resolve(detectPII(text)),
+    Promise.resolve(detectSupplementary(text)),
     detectPIIWithMl(text),
   ]);
+  const regexDet = mergeDetections(regexBase, regexSupp);
   const detections = mergeDetections(regexDet, mlDet);
   if (detections.length === 0) {
     return { text, substitutions: 0, newEntries: [] };
