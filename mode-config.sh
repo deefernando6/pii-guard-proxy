@@ -85,7 +85,7 @@ _pii_guard_hp_check() {
     export HTTPS_PROXY="http://127.0.0.1:8765"
     export HTTP_PROXY="http://127.0.0.1:8765"
     export NO_PROXY="localhost,127.0.0.1,::1"
-    export NODE_EXTRA_CA_CERTS="/etc/pii-guard/ca-cert.pem"
+    export NODE_EXTRA_CA_CERTS="/usr/local/share/ca-certificates/pii-guard.crt"
   else
     unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_EXTRA_CA_CERTS
   fi
