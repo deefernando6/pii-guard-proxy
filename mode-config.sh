@@ -52,21 +52,51 @@ terminate_browsers() {
 
 write_profile_claude_code() {
   cat > "$1" <<'PROFILE'
-# Installed by pii-guard-proxy. Removed automatically when the proxy
-# service is stopped — start the service to bring it back.
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8765"
+# Installed by pii-guard-proxy. Dynamically sets/unsets ANTHROPIC_BASE_URL
+# before every shell prompt so the env var stays in sync with the proxy
+# service state — no need to open a new terminal when the service starts
+# or stops.
+_pii_guard_cc_check() {
+  if systemctl is-active --quiet pii-guard-proxy 2>/dev/null; then
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:8765"
+  else
+    unset ANTHROPIC_BASE_URL
+  fi
+}
+_pii_guard_cc_check
+if [ -n "${BASH_VERSION:-}" ]; then
+  PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND%;}; }_pii_guard_cc_check"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  autoload -Uz add-zsh-hook 2>/dev/null || true
+  add-zsh-hook precmd _pii_guard_cc_check 2>/dev/null || true
+fi
 PROFILE
   chmod 0644 "$1"
 }
 
 write_profile_https_proxy() {
   cat > "$1" <<'PROFILE'
-# Installed by pii-guard-proxy. Removed automatically when the proxy
-# service is stopped — start the service to bring it back.
-export HTTPS_PROXY="http://127.0.0.1:8765"
-export HTTP_PROXY="http://127.0.0.1:8765"
-export NO_PROXY="localhost,127.0.0.1,::1"
-export NODE_EXTRA_CA_CERTS="/etc/pii-guard/ca-cert.pem"
+# Installed by pii-guard-proxy. Dynamically sets/unsets HTTPS_PROXY etc.
+# before every shell prompt so the env vars stay in sync with the proxy
+# service state — no need to open a new terminal when the service starts
+# or stops.
+_pii_guard_hp_check() {
+  if systemctl is-active --quiet pii-guard-proxy 2>/dev/null; then
+    export HTTPS_PROXY="http://127.0.0.1:8765"
+    export HTTP_PROXY="http://127.0.0.1:8765"
+    export NO_PROXY="localhost,127.0.0.1,::1"
+    export NODE_EXTRA_CA_CERTS="/etc/pii-guard/ca-cert.pem"
+  else
+    unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_EXTRA_CA_CERTS
+  fi
+}
+_pii_guard_hp_check
+if [ -n "${BASH_VERSION:-}" ]; then
+  PROMPT_COMMAND="${PROMPT_COMMAND:+${PROMPT_COMMAND%;}; }_pii_guard_hp_check"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  autoload -Uz add-zsh-hook 2>/dev/null || true
+  add-zsh-hook precmd _pii_guard_hp_check 2>/dev/null || true
+fi
 PROFILE
   chmod 0644 "$1"
 }
@@ -81,20 +111,16 @@ POLICY_JSON='{
 apply() {
   changed=0
 
-  # claude-code: ANTHROPIC_BASE_URL
+  # claude-code: ANTHROPIC_BASE_URL (always rewrite so hook is up-to-date)
   if [ -f "$MARKER_CLAUDE_CODE" ]; then
-    if [ ! -f "$PROFILE_CLAUDE_CODE" ]; then
-      write_profile_claude_code "$PROFILE_CLAUDE_CODE"
-      changed=1
-    fi
+    write_profile_claude_code "$PROFILE_CLAUDE_CODE"
+    changed=1
   fi
 
-  # https-proxy: HTTPS_PROXY etc.
+  # https-proxy: HTTPS_PROXY etc. (always rewrite so hook is up-to-date)
   if [ -f "$MARKER_HTTPS_PROXY" ]; then
-    if [ ! -f "$PROFILE_HTTPS_PROXY" ]; then
-      write_profile_https_proxy "$PROFILE_HTTPS_PROXY"
-      changed=1
-    fi
+    write_profile_https_proxy "$PROFILE_HTTPS_PROXY"
+    changed=1
   fi
 
   # browser: Chromium-family managed policy
@@ -125,17 +151,15 @@ apply() {
 }
 
 revert() {
-  changed=0
   browser_changed=0
 
-  if [ -f "$PROFILE_CLAUDE_CODE" ]; then
-    rm -f "$PROFILE_CLAUDE_CODE"
-    changed=1
-  fi
-  if [ -f "$PROFILE_HTTPS_PROXY" ]; then
-    rm -f "$PROFILE_HTTPS_PROXY"
-    changed=1
-  fi
+  # profile.d files are kept on stop — the PROMPT_COMMAND/precmd hook
+  # inside them will automatically unset the env vars the next time the
+  # user runs a command in any open shell. Removing the files here would
+  # mean new shells opened after the stop would never get the hook and
+  # therefore wouldn't auto-reconnect when the service starts again.
+  # Files are only deleted on package remove/purge (postrm).
+
   for d in $POLICY_DIRS; do
     f="$d/pii-guard.json"
     if [ -f "$f" ]; then
@@ -144,16 +168,12 @@ revert() {
     fi
   done
 
-  if [ "$changed" = "1" ] || [ "$browser_changed" = "1" ]; then
-    echo "[pii-guard-config] config removed (proxy is no longer running)"
-    if [ "$changed" = "1" ]; then
-      echo "[pii-guard-config]   note: existing shells still have ANTHROPIC_BASE_URL / HTTPS_PROXY in their env;"
-      echo "[pii-guard-config]         open a new shell or run: unset ANTHROPIC_BASE_URL HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_EXTRA_CA_CERTS"
-    fi
-  fi
   if [ "$browser_changed" = "1" ]; then
+    echo "[pii-guard-config] browser proxy policy removed (proxy is no longer running)"
+    echo "[pii-guard-config]   note: running Chromium-family browsers keep their cached policy until restarted"
     terminate_browsers
   fi
+  echo "[pii-guard-config] proxy stopped — shell env vars will be auto-cleared on next prompt"
 }
 
 case "${1:-}" in
