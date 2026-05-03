@@ -25,6 +25,11 @@ ExecStart=/usr/bin/node /usr/lib/pii-guard-proxy/proxy.js
 ExecStartPost=+/usr/lib/pii-guard-proxy/mode-config.sh apply
 ExecStopPost=+/usr/lib/pii-guard-proxy/mode-config.sh revert
 
+# On SIGTERM the proxy enters passthrough mode (forwards without filtering)
+# so active Claude Code sessions keep working. The proxy exits after 5 s;
+# systemd sends SIGKILL at 10 s if the process hasn't exited by then.
+# This keeps stop / apt purge fast while still finishing in-flight requests.
+TimeoutStopSec=10
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
@@ -33,9 +38,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-# /var/lib/pii-guard holds the GLiNER ONNX model files when hybrid mode
-# is enabled; transformers.js mmaps them on load.
-ReadWritePaths=/etc/pii-guard /var/lib/pii-guard
+ReadWritePaths=/etc/pii-guard
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

@@ -12,10 +12,7 @@ case "$1" in
     MODES=$(printf '%s' "${RET:-claude-code}" | tr -d ' ')
     db_get pii-guard-proxy/install-deps || true
     INSTALL_DEPS="${RET:-true}"
-    db_get pii-guard-proxy/detection-mode || true
-    DETECTION_MODE="${RET:-regex-only}"
     echo "[pii-guard-proxy] Selected modes: $MODES"
-    echo "[pii-guard-proxy] Detection engine: $DETECTION_MODE"
 
     # ─── 2. Figure out what's missing — DON'T install inline ────────────
     # apt-get cannot acquire the lock from inside dpkg's postinst, so we
@@ -48,7 +45,7 @@ case "$1" in
         --home /etc/pii-guard --shell /usr/sbin/nologin \
         --gecos "PII Guard service" pii-guard
     fi
-    install -d -m 0750 -o pii-guard -g pii-guard /etc/pii-guard
+    install -d -m 0755 -o pii-guard -g pii-guard /etc/pii-guard
 
     # Seed the optional custom contacts file. The detector reads this on
     # service start and treats every name listed here as PII regardless
@@ -138,21 +135,6 @@ RUNTIME
       ;;
     esac
 
-    # Detection-engine marker. The proxy looks at this on startup to decide
-    # whether to load the ML pipeline. If hybrid was selected but the model
-    # files aren't downloaded yet (deferred), the proxy gracefully falls
-    # back to regex-only and tries to load the model again on the next
-    # restart after finish-install completes.
-    rm -f /etc/pii-guard/ml-detection-enabled
-    DEFER_ML=""
-    if [ "$DETECTION_MODE" = "hybrid" ]; then
-      touch /etc/pii-guard/ml-detection-enabled
-      chmod 0644 /etc/pii-guard/ml-detection-enabled
-      echo "[pii-guard-proxy]   ✓ Hybrid detection: marker set; model download queued"
-      DEFER_ML="hybrid"
-      install -d -m 0755 -o pii-guard -g pii-guard /var/lib/pii-guard/models
-    fi
-
     # Per-user Chrome NSS trust: iterate every real user with a home
     # directory so we don't depend on $SUDO_USER being set correctly.
     TARGET_USER="${SUDO_USER:-${PKEXEC_UID:+$(getent passwd "$PKEXEC_UID" | cut -d: -f1)}}"
@@ -197,10 +179,9 @@ RUNTIME
     fi
 
     # ─── 7. Defer apt install + remaining setup if anything is missing ──
-    if [ -n "$DEFERRED_APT" ] || [ -n "$DEFER_NSS_TRUST" ] || [ -n "$DEFER_ML" ]; then
+    if [ -n "$DEFERRED_APT" ] || [ -n "$DEFER_NSS_TRUST" ]; then
       echo ""
       [ -n "$DEFERRED_APT" ] && echo "[pii-guard-proxy] Scheduling deferred install of:$DEFERRED_APT"
-      [ -n "$DEFER_ML" ] && echo "[pii-guard-proxy] Scheduling GLiNER model download (~50 MB)"
       echo "[pii-guard-proxy] Watch progress:  tail -f /var/log/pii-guard-finish-install.log"
 
       # The deferred installer must NOT be a child of dpkg — dpkg waits for
@@ -215,12 +196,12 @@ RUNTIME
           --unit=pii-guard-finish-install \
           --description="PII Guard - finalize install after dpkg releases its lock" \
           /usr/lib/pii-guard-proxy/finish-install.sh \
-            "$DEFERRED_APT" "$DEFER_NSS_TRUST" "$DEFER_ML"
+            "$DEFERRED_APT" "$DEFER_NSS_TRUST"
       else
         # Fallback for non-systemd environments (rare).
         nohup setsid sh -c \
-          "exec /usr/lib/pii-guard-proxy/finish-install.sh \"\$1\" \"\$2\" \"\$3\"" \
-          _ "$DEFERRED_APT" "$DEFER_NSS_TRUST" "$DEFER_ML" \
+          "exec /usr/lib/pii-guard-proxy/finish-install.sh \"\$1\" \"\$2\"" \
+          _ "$DEFERRED_APT" "$DEFER_NSS_TRUST" \
           </dev/null >/dev/null 2>&1 &
       fi
       set -e
@@ -239,8 +220,11 @@ RUNTIME
 ║    sudo pii-guard placeholder-replace enable|disable           ║
 ║    sudo pii-guard reconfigure                                  ║
 ║                                                                ║
-║  Open a new shell (or run: source /etc/profile) to pick up    ║
-║  the env vars set by the active modes.                        ║
+║  ► Activate in THIS terminal (already-open shells):           ║
+║      source /etc/pii-guard/pii-guard-hook.zsh                 ║
+║                                                                ║
+║  Or just open a new terminal — it will be set up              ║
+║  automatically via /etc/zsh/zshrc.                            ║
 ╚═══════════════════════════════════════════════════════════════╝
 
 BANNER

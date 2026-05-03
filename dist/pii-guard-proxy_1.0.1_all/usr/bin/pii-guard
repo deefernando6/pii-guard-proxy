@@ -29,11 +29,6 @@ Inspection:
 Reconfiguration:
   pii-guard reconfigure                   Re-run the install-time mode multiselect.
 
-Detection engine:
-  pii-guard ml-status                     Show whether the GLiNER ML detector is loaded.
-  pii-guard ml-enable                     Switch to hybrid (regex + GLiNER PII Small); fetches model on first enable.
-  pii-guard ml-disable                    Switch back to regex-only.
-
 Cert helpers:
   pii-guard trust-chrome                  Add the proxy CA to the current user's Chrome NSS DB.
 EOF
@@ -75,17 +70,26 @@ is_truthy() {
 
 # ─── subcommands
 
+reload_service_config() {
+  # Send SIGHUP to the running proxy so it reloads runtime.env without a
+  # full restart. Falls back to restart if the service isn't running.
+  if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+    systemctl kill --signal=SIGHUP "$SERVICE" 2>/dev/null \
+      || err "failed to send SIGHUP to $SERVICE"
+  fi
+}
+
 cmd_placeholder_replace() {
   case "${1:-status}" in
     enable|on|true)
       write_var PII_GUARD_REVEAL true
-      restart_service
+      reload_service_config
       echo "Placeholder replacement: ENABLED."
       echo "The proxy will swap placeholders back to real values in LLM responses."
       ;;
     disable|off|false)
       write_var PII_GUARD_REVEAL false
-      restart_service
+      reload_service_config
       echo "Placeholder replacement: DISABLED."
       echo "Placeholders like [PHONE_1] will remain visible in LLM responses (proves the LLM only saw placeholders)."
       ;;
@@ -158,61 +162,12 @@ cmd_trust_chrome() {
   exec /usr/bin/pii-guard-trust-chrome
 }
 
-ML_MARKER=/etc/pii-guard/ml-detection-enabled
-ML_MODEL_DIR=/var/lib/pii-guard/models/gliner-pii-small
-
-cmd_ml_status() {
-  if [ -f "$ML_MARKER" ]; then
-    echo "Detection mode: HYBRID  (regex + GLiNER PII Small)"
-  else
-    echo "Detection mode: REGEX-ONLY"
-  fi
-  if [ -f "$ML_MODEL_DIR/onnx/model_quantized.onnx" ]; then
-    echo "Model present:  yes  ($ML_MODEL_DIR, $(du -sh "$ML_MODEL_DIR" 2>/dev/null | cut -f1))"
-  else
-    echo "Model present:  no   (run: sudo pii-guard ml-enable)"
-  fi
-  if [ -d /usr/lib/pii-guard-proxy/node_modules/@huggingface/transformers ]; then
-    echo "transformers.js: installed"
-  else
-    echo "transformers.js: not installed"
-  fi
-}
-
-cmd_ml_enable() {
-  need_root "$@"
-  install -d -m 0750 -o pii-guard -g pii-guard "$CONFIG_DIR"
-  install -d -m 0755 -o pii-guard -g pii-guard /var/lib/pii-guard/models
-  touch "$ML_MARKER"
-  chmod 0644 "$ML_MARKER"
-  echo "Hybrid detection enabled. Fetching model + transformers.js (~50 MB)..."
-  if [ -x /usr/lib/pii-guard-proxy/install-ml.sh ]; then
-    /usr/lib/pii-guard-proxy/install-ml.sh \
-      || err "model download failed — re-run after fixing connectivity"
-  else
-    err "/usr/lib/pii-guard-proxy/install-ml.sh missing — reinstall the package"
-  fi
-  restart_service
-  echo "Done. Verify with: pii-guard ml-status"
-}
-
-cmd_ml_disable() {
-  need_root "$@"
-  rm -f "$ML_MARKER"
-  restart_service
-  echo "Hybrid detection disabled — proxy is now regex-only."
-  echo "Model files at $ML_MODEL_DIR are kept; remove with: sudo rm -rf $ML_MODEL_DIR"
-}
-
 case "${1:-}" in
   placeholder-replace) shift; cmd_placeholder_replace "$@" ;;
   status)              cmd_status ;;
   modes)               cmd_modes ;;
   log)                 shift; cmd_log "$@" ;;
   reconfigure)         cmd_reconfigure ;;
-  ml-status)           cmd_ml_status ;;
-  ml-enable)           cmd_ml_enable "$@" ;;
-  ml-disable)          cmd_ml_disable "$@" ;;
   trust-chrome)        cmd_trust_chrome ;;
   ""|-h|--help|help)   usage ;;
   *)                   err "unknown subcommand '$1' (run: pii-guard --help)" ;;

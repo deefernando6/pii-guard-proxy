@@ -12,7 +12,13 @@ remove_mode_files() {
   rm -f /etc/pii-guard/claude-code-mode-enabled
   rm -f /etc/pii-guard/https-proxy-mode-enabled
   rm -f /etc/pii-guard/browser-mode-enabled
-  rm -f /etc/pii-guard/ml-detection-enabled
+  # Remove the zsh hook injection from /etc/zsh/zshrc and the hook file
+  rm -f /etc/pii-guard/pii-guard-hook.zsh
+  if [ -f /etc/zsh/zshrc ]; then
+    grep -v "pii-guard-proxy" /etc/zsh/zshrc > /etc/zsh/zshrc.pii-guard-tmp \
+      && mv /etc/zsh/zshrc.pii-guard-tmp /etc/zsh/zshrc \
+      || rm -f /etc/zsh/zshrc.pii-guard-tmp
+  fi
 }
 
 # Snapshot whether browser policy was active BEFORE we remove anything,
@@ -35,7 +41,6 @@ case "$1" in
         update-ca-certificates >/dev/null 2>&1 || true
     fi
     rm -rf /etc/pii-guard
-    rm -rf /var/lib/pii-guard
     if getent passwd pii-guard >/dev/null; then
       deluser --quiet pii-guard >/dev/null 2>&1 || true
     fi

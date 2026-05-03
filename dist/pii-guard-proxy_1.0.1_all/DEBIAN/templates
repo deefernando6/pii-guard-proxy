@@ -21,39 +21,6 @@ Description: Select the proxy mode(s) to activate
   installing user's NSS database. Chrome on this machine then routes
   through the proxy automatically with no flags or extensions.
 
-Template: pii-guard-proxy/detection-mode
-Type: select
-Choices: regex-only, hybrid
-Default: regex-only
-Description: PII detection engine
- PII Guard ships with two detection backends. Pick one:
- .
- regex-only: 30+ hand-tuned patterns covering emails, phones, credit cards,
-  IBAN, SSN/NIC/Aadhaar/PAN/Passport, IP/MAC, dates of birth, addresses, and
-  a long list of API keys and secrets. Fast (sub-millisecond), deterministic,
-  no extra download. The default.
- .
- hybrid: regex-only PLUS the GLiNER PII Small model
-  (knowledgator/gliner-pii-small-v1.0) for context-dependent detection of
-  names, locations, and other entities regex can't reach reliably. Adds
-  about 50 MB of model files on top of the deb (downloaded after install
-  finishes — no extra time during dpkg). Inference adds ~50–200 ms per
-  prompt on a typical CPU. Pick this if you regularly send long, prose-style
-  prompts containing names or addresses.
-
-Template: pii-guard-proxy/hybrid-download-warning
-Type: note
-Description: Hybrid mode will download ~50 MB of model files
- You selected the hybrid PII detection mode. After installation finishes,
- a background helper will download the GLiNER PII Small ONNX model and the
- transformers.js npm dependency — about 50 MB total — into
- /var/lib/pii-guard/models/. Until that download completes the proxy will
- fall back to regex-only detection automatically, so it keeps working
- either way.
- .
- Watch progress with:  tail -f /var/log/pii-guard-finish-install.log
- Check status with:    pii-guard ml-status
-
 Template: pii-guard-proxy/install-deps
 Type: boolean
 Default: true

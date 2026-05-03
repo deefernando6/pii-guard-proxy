@@ -199,24 +199,4 @@ function walkJsonStrings(node, mutate) {
   }
 }
 
-// Async variant of walkJsonStrings — `mutate(str)` may return a string
-// or a Promise<string>. Used by processGenericJson when the ML detector
-// is in the loop, since detectPIIWithMl is async even when it returns
-// instantly in regex-only mode.
-async function walkJsonStringsAsync(node, mutate) {
-  if (Array.isArray(node)) {
-    for (let i = 0; i < node.length; i++) {
-      const v = node[i];
-      if (typeof v === 'string') node[i] = await mutate(v);
-      else if (v !== null && typeof v === 'object') await walkJsonStringsAsync(v, mutate);
-    }
-  } else if (node !== null && typeof node === 'object') {
-    for (const k of Object.keys(node)) {
-      const v = node[k];
-      if (typeof v === 'string') node[k] = await mutate(v);
-      else if (v !== null && typeof v === 'object') await walkJsonStringsAsync(v, mutate);
-    }
-  }
-}
-
-module.exports = { findParser, isLLMHost, hasSpecificParser, walkJsonStrings, walkJsonStringsAsync };
+module.exports = { findParser, isLLMHost, hasSpecificParser, walkJsonStrings };

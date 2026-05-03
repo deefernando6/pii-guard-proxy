@@ -6,19 +6,45 @@ const https = require('https');
 const tls = require('tls');
 const net = require('net');
 const { detectPII } = require('./lib/detector');
-const { detectPIIWithMl, mlStatus } = require('./lib/ml-detector');
 const { placeholderFor } = require('./lib/anonymizer');
 const { promptUser } = require('./prompt');
 const { ensureCa, getSecureContext, getCaCertPath } = require('./lib/cert-manager');
-const { findParser, isLLMHost, hasSpecificParser, walkJsonStrings, walkJsonStringsAsync } = require('./lib/web-parsers');
+const { findParser, isLLMHost, hasSpecificParser, walkJsonStrings } = require('./lib/web-parsers');
 const { recordWebAnonymization, getCurrentTurn, maskOriginal, injectSidebar } = require('./lib/web-injector');
 
 const PORT = parseInt(process.env.PII_GUARD_PORT || '8765', 10);
 const UPSTREAM_HOST = process.env.PII_GUARD_UPSTREAM || 'api.anthropic.com';
-const REVEAL_IN_RESPONSE =
+let REVEAL_IN_RESPONSE =
   (process.env.PII_GUARD_REVEAL || 'true').toLowerCase() !== 'false';
 const ENABLE_MITM =
   (process.env.PII_GUARD_MITM || 'true').toLowerCase() !== 'false';
+
+// SIGHUP: reload runtime config (PII_GUARD_REVEAL) without restarting.
+// Used by `pii-guard placeholder-replace enable|disable` so it can toggle
+// the setting instantly without a service restart.
+const fs = require('fs');
+process.on('SIGHUP', () => {
+  try {
+    const env = fs.readFileSync('/etc/pii-guard/runtime.env', 'utf8');
+    const m = env.match(/^PII_GUARD_REVEAL=(.+)$/m);
+    if (m) {
+      REVEAL_IN_RESPONSE = m[1].trim().toLowerCase() !== 'false';
+      console.log(`[PII Guard] config reloaded — reveal=${REVEAL_IN_RESPONSE}`);
+    }
+  } catch (e) {
+    console.error('[PII Guard] SIGHUP config reload failed:', e.message);
+  }
+});
+
+// SIGTERM: enter passthrough mode so active sessions survive the stop window.
+// Exit after 5 s so systemctl stop / apt purge return quickly.
+let passthroughMode = false;
+process.on('SIGTERM', () => {
+  if (passthroughMode) { process.exit(0); } // second SIGTERM = exit now
+  passthroughMode = true;
+  console.log('[PII Guard] service stopping — passthrough mode active (5 s, then exit)');
+  setTimeout(() => process.exit(0), 5000).unref();
+});
 
 let promptChain = Promise.resolve();
 function serializePrompt(fn) {
@@ -72,37 +98,12 @@ function collectAppliedEntries(originalBody, rewrittenBody, allKnown) {
   return applied;
 }
 
-// Drop ML-detected spans that overlap a regex-detected span. Regex
-// detections are higher precision (deterministic, validated) so we
-// always prefer them. Both lists arrive sorted internally; we just
-// linearly merge.
-function mergeDetections(regex, ml) {
-  if (!ml || ml.length === 0) return regex;
-  const merged = [...regex];
-  for (const m of ml) {
-    let overlaps = false;
-    for (const r of regex) {
-      if (m.start < r.end && r.start < m.end) { overlaps = true; break; }
-    }
-    if (!overlaps) merged.push(m);
-  }
-  return merged;
-}
-
-// Replace PII in a single text block using the persistent map. Async
-// because the ML detector can run alongside the regex detector when
-// hybrid mode is on; in regex-only mode the ML call returns instantly.
-async function anonymizeText(text) {
+// Replace PII in a single text block using the persistent map.
+function anonymizeText(text) {
   if (!text || typeof text !== 'string') {
     return { text, substitutions: 0, newEntries: [] };
   }
-  // Run both detectors in parallel. detectPIIWithMl is a no-op when
-  // hybrid mode is off, so the cost is one promise allocation.
-  const [regexDet, mlDet] = await Promise.all([
-    Promise.resolve(detectPII(text)),
-    detectPIIWithMl(text),
-  ]);
-  const detections = mergeDetections(regexDet, mlDet);
+  const detections = detectPII(text);
   if (detections.length === 0) {
     return { text, substitutions: 0, newEntries: [] };
   }
@@ -126,7 +127,7 @@ async function anonymizeText(text) {
 
 // Walk every message in /v1/messages and anonymize text content in place.
 // Returns aggregate stats so we know whether to forward, prompt, or pass through.
-async function anonymizeAllMessages(parsed) {
+function anonymizeAllMessages(parsed) {
   let substitutions = 0;
   const newEntries = [];
   const newInLastUser = [];
@@ -142,7 +143,7 @@ async function anonymizeAllMessages(parsed) {
     const isLastUser = i === lastIdx && msg.role === 'user';
 
     if (typeof msg.content === 'string') {
-      const r = await anonymizeText(msg.content);
+      const r = anonymizeText(msg.content);
       if (r.substitutions > 0) {
         msg.content = r.text;
         substitutions += r.substitutions;
@@ -152,7 +153,7 @@ async function anonymizeAllMessages(parsed) {
     } else if (Array.isArray(msg.content)) {
       for (const item of msg.content) {
         if (item && item.type === 'text' && typeof item.text === 'string') {
-          const r = await anonymizeText(item.text);
+          const r = anonymizeText(item.text);
           if (r.substitutions > 0) {
             item.text = r.text;
             substitutions += r.substitutions;
@@ -530,6 +531,12 @@ async function handleProxyRequest(req, clientRes) {
     return forwardAsProxy(req, clientRes, body);
   }
 
+  // Passthrough mode: SIGTERM received, service is stopping. Skip PII
+  // detection so active Claude Code sessions keep working until SIGKILL.
+  if (passthroughMode) {
+    return forwardRequest(req, clientRes, body, null);
+  }
+
   if (req.method !== 'POST' || !req.url.startsWith('/v1/messages')) {
     return forwardRequest(req, clientRes, body, null);
   }
@@ -541,7 +548,7 @@ async function handleProxyRequest(req, clientRes) {
 
   // Walk every message in the conversation; anonymize text using the
   // persistent map so the same value gets the same placeholder across turns.
-  const stats = await anonymizeAllMessages(parsed);
+  const stats = anonymizeAllMessages(parsed);
 
   if (stats.substitutions === 0) {
     // Nothing to anonymize, but still revert any placeholders the model
@@ -703,7 +710,7 @@ async function handleWebUiRequest(req, clientRes, hostname) {
 }
 
 async function processWithParser(req, clientRes, hostname, body, parser, extracted) {
-  const result = await anonymizeText(extracted.text);
+  const result = anonymizeText(extracted.text);
   if (result.substitutions === 0) {
     const allKnown = [...persistentMap.values()];
     return forwardRequest(req, clientRes, body, allKnown.length ? allKnown : null, hostname);
@@ -758,9 +765,9 @@ async function processGenericJson(req, clientRes, hostname, body) {
   const newEntries = [];
   let firstChangedText = '';
 
-  await walkJsonStringsAsync(parsed, async (str) => {
+  walkJsonStrings(parsed, (str) => {
     if (!str || !str.trim() || str.length > 500000) return str;
-    const r = await anonymizeText(str);
+    const r = anonymizeText(str);
     if (r.substitutions > 0) {
       totalSubs += r.substitutions;
       newEntries.push(...r.newEntries);

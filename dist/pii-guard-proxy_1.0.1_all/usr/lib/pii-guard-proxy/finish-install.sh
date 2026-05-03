@@ -7,8 +7,6 @@
 # Args:
 #   $1 — space-separated list of apt packages to install (may be empty)
 #   $2 — optional user whose Chrome NSS DB should receive the CA
-#   $3 — set to "hybrid" to also fetch the GLiNER PII Small ONNX model
-#        + transformers.js dependency for the hybrid detection mode
 #
 # This script is "best-effort" everywhere — it never aborts. If something
 # fails, it logs and continues so downstream steps still run.
@@ -17,7 +15,7 @@ cd /
 
 LOG=/var/log/pii-guard-finish-install.log
 echo "" >>"$LOG"
-echo "[$(date '+%F %T')] finish-install starting (apt: $1, user: ${2:-none}, ml: ${3:-none})" >>"$LOG"
+echo "[$(date '+%F %T')] finish-install starting (apt: $1, user: ${2:-none})" >>"$LOG"
 exec >>"$LOG" 2>&1
 
 # 1. Wait for dpkg / apt locks to release.
@@ -65,24 +63,12 @@ if [ -f /etc/pii-guard/ca-cert.pem ] \
     && update-ca-certificates >/dev/null 2>&1
 fi
 
-# 5. If hybrid detection was selected, fetch transformers.js + the
-#    GLiNER PII Small ONNX weights into /var/lib/pii-guard/models/.
-#    Done BEFORE the service restart so the proxy picks up the model
-#    on its first start. install-ml.sh is itself best-effort — if
-#    download fails, the proxy falls back to regex-only and the user
-#    can re-run via `sudo pii-guard ml-enable`.
-if [ "$3" = "hybrid" ] && [ -x /usr/lib/pii-guard-proxy/install-ml.sh ]; then
-  echo "[$(date '+%F %T')] Hybrid detection requested — installing ML stack..."
-  /usr/lib/pii-guard-proxy/install-ml.sh \
-    || echo "[$(date '+%F %T')] ML install reported failure (proxy will run regex-only)"
-fi
-
-# 6. Restart the service.
+# 5. Restart the service.
 systemctl daemon-reload >/dev/null 2>&1
 systemctl restart pii-guard-proxy.service \
   || echo "[$(date '+%F %T')] Service restart failed — see journalctl -u pii-guard-proxy"
 
-# 7. Add CA to every real user's Chrome NSS DB.
+# 6. Add CA to every real user's Chrome NSS DB.
 #    We iterate /home/* instead of relying on a single user argument because
 #    SUDO_USER is unreliable (can be empty, or 'root' if the install was run
 #    from a root login shell). Browsers run as the desktop user(s), so we

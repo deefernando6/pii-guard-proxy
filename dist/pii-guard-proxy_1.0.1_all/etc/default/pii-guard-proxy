@@ -22,12 +22,3 @@
 #     chunk-boundary heuristics. Lower latency, but can leave some
 #     placeholders un-reverted in edge cases.
 #PII_GUARD_STREAMING=false
-#
-# PII detection engine selection. The installer asks "regex-only" vs
-# "hybrid" via debconf and writes the result to a marker file:
-#   /etc/pii-guard/ml-detection-enabled  (present = hybrid, absent = regex-only)
-# Toggle at runtime with:
-#   sudo pii-guard ml-enable    (also fetches ~50 MB GLiNER PII Small model)
-#   sudo pii-guard ml-disable
-# Inspect with:
-#   pii-guard ml-status

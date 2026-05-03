@@ -34,27 +34,6 @@ case ",$NORMALIZED," in
     ;;
 esac
 
-# Detection engine: regex-only (default, fast, no extra download) or
-# hybrid (regex + GLiNER PII Small ONNX, ~50 MB downloaded post-install).
-if [ "$1" = "reconfigure" ]; then
-  db_fset pii-guard-proxy/detection-mode seen false || true
-fi
-db_input high pii-guard-proxy/detection-mode || true
-db_go || true
-
-# When hybrid is chosen, show a download-size warning so it never feels
-# like the proxy is silently fetching tens of megabytes behind their back.
-db_get pii-guard-proxy/detection-mode
-case "${RET:-regex-only}" in
-  hybrid)
-    if [ "$1" = "reconfigure" ]; then
-      db_fset pii-guard-proxy/hybrid-download-warning seen false || true
-    fi
-    db_input high pii-guard-proxy/hybrid-download-warning || true
-    db_go || true
-    ;;
-esac
-
 if [ "$1" = "reconfigure" ]; then
   db_fset pii-guard-proxy/install-deps seen false || true
 fi
