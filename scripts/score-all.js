@@ -1,35 +1,40 @@
 #!/usr/bin/env node
 'use strict';
 
-// Span-level F1 for the 4 detection scenarios on the English validation
-// split of ai4privacy/pii-masking-300k:
+// v2: Per-model label maps + in-scope filtering. Each ML model emits
+// labels in its own taxonomy (DeBERTa-v3-base ai4privacy uses the
+// pii-masking-200k 54-label scheme; GLiNER uses the natural-language
+// label phrases we asked for). This script maps each model's labels
+// to the pii-masking-300k 28-label gold scheme and DROPS predictions
+// whose label has no gold counterpart (AGE, AMOUNT, COMPANYNAME,
+// EYECOLOR, etc.) — they're "real" PII detections but the 300k
+// dataset doesn't annotate them, so counting them as FPs would
+// misrepresent the model's quality on this benchmark.
 //
-//   regex-only          — proxy's lib/detector.js
-//   regex + gliner_int8 — regex ∪ GLiNER PII Small (ours, INT8 ONNX)
-//   regex + gliner_fp32 — regex ∪ GLiNER PII Small (FP32 PyTorch)
-//   regex + deberta     — regex ∪ DeBERTa-v3-base ai4privacy FT
-//
-// ML predictions come from /tmp/pii-bench/predictions/{model}.jsonl, which
-// is what benchmark_ml.py writes. ML-predicted spans whose label maps to a
-// known proxy type override the same span in regex (regex always wins on
-// overlaps); ML spans that DON'T overlap any regex span are added.
-//
-// Same span-overlap any-type / type-aware F1 framework as
-// scripts/benchmark-pii-masking-300k.js in the proxy repo.
+// Same span-overlap any-type / type-aware F1 framework as v1.
 
 const fs = require('fs');
 const path = require('path');
-// When this script is in the proxy repo at scripts/score-all.js the
-// detector lives one level up at lib/detector.js. The /tmp copy used
-// during the original benchmark also resolved to the same module via
-// an absolute path; relative is more portable.
 const { detectPII } = require(process.env.PII_GUARD_DETECTOR
-  || require('path').join(__dirname, '..', 'lib', 'detector'));
+  || path.join(__dirname, '..', 'lib', 'detector'));
 
-const INPUT = process.argv[2] || '/tmp/pii-bench/english_validation.jsonl';
-const PREDS_DIR = '/tmp/pii-bench/predictions';
+const INPUT = process.argv[2]
+  || path.join(__dirname, 'data', 'english_validation.jsonl');
+const PREDS_DIR = process.env.PII_GUARD_PREDS_DIR || '/tmp/pii-bench/predictions';
 
-const LABEL_MAP = {
+// pii-masking-300k gold labels (the 28 labels actually used).
+// Used as the universe for "is this prediction in scope?"
+const GOLD_LABELS = new Set([
+  'TIME', 'USERNAME', 'IDCARD', 'EMAIL', 'SOCIALNUMBER', 'PASSPORT',
+  'DRIVERLICENSE', 'LASTNAME1', 'BOD', 'IP', 'GIVENNAME1', 'CITY',
+  'SEX', 'STATE', 'TEL', 'BUILDING', 'TITLE', 'STREET', 'POSTCODE',
+  'DATE', 'PASS', 'COUNTRY', 'SECADDRESS', 'LASTNAME2', 'GIVENNAME2',
+  'GEOCOORD', 'LASTNAME3', 'CARDISSUER',
+]);
+
+// Regex types map to gold labels (proxy detector taxonomy).
+// LABEL_MAP[gold_label] = [regex_types_we_accept]
+const REGEX_GOLD_ACCEPTANCE = {
   EMAIL: ['EMAIL'],
   TEL: ['PHONE'],
   IP: ['IPV4', 'IPV6'],
@@ -47,78 +52,118 @@ const LABEL_MAP = {
   CARDISSUER: [], DRIVERLICENSE: [],
 };
 
-// GLiNER / DeBERTa label → proxy type. Both models use natural-language
-// or BIO-style labels; collapse to the proxy taxonomy so type-aware F1
-// can compare apples to apples.
-const ML_LABEL_TO_TYPE = {
-  'person': 'NAME',
-  'person name': 'NAME',
-  'first name': 'NAME',
-  'last name': 'NAME',
-  'name': 'NAME',
-  'firstname': 'NAME',
-  'lastname': 'NAME',
-  'givenname1': 'NAME',
-  'givenname2': 'NAME',
-  'lastname1': 'NAME',
-  'lastname2': 'NAME',
-  'lastname3': 'NAME',
-  'username': 'USERNAME',           // covered by ML, not regex
-  'email address': 'EMAIL',
-  'email': 'EMAIL',
-  'phone number': 'PHONE',
-  'phone': 'PHONE',
-  'tel': 'PHONE',
-  'ip address': 'IPV4',
-  'ip': 'IPV4',
-  'date of birth': 'DOB',
-  'dob': 'DOB',
-  'bod': 'DOB',
-  'date': 'DOB',
-  'time': 'TIME',
-  'address': 'ADDRESS',
-  'street address': 'ADDRESS',
-  'street': 'ADDRESS',
-  'city': 'ADDRESS',
-  'state': 'ADDRESS',
-  'country': 'ADDRESS',
-  'postal code': 'ADDRESS',
-  'postcode': 'ADDRESS',
-  'building': 'ADDRESS',
-  'secondary address': 'ADDRESS',
-  'secaddress': 'ADDRESS',
-  'geographic coordinates': 'GEOCOORD',
-  'geocoord': 'GEOCOORD',
-  'id card': 'NIC_LK',
-  'idcard': 'NIC_LK',
-  'social security number': 'SSN',
-  'socialnumber': 'SSN',
-  'passport number': 'PASSPORT',
-  'passport': 'PASSPORT',
-  'driver license': 'DRIVERLICENSE',
-  'driverlicense': 'DRIVERLICENSE',
-  'password': 'PASSWORD_FIELD',
-  'pass': 'PASSWORD_FIELD',
-  'sex': 'SEX',
-  'card issuer': 'CARDISSUER',
-  'cardissuer': 'CARDISSUER',
-  'title': 'TITLE',
+// DeBERTa label → gold-label set it should be accepted as.
+// Empty array → in-scope but no specific type match (only counts under any-type).
+// undefined → out-of-scope (filter the prediction out entirely).
+const DEBERTA_TO_GOLD = {
+  // direct matches
+  'EMAIL':              ['EMAIL'],
+  'PHONENUMBER':        ['TEL'],
+  'USERNAME':           ['USERNAME'],
+  'TIME':               ['TIME'],
+  'DATE':               ['DATE'],
+  'DOB':                ['BOD'],
+  'SSN':                ['SOCIALNUMBER'],
+  'CITY':               ['CITY'],
+  'STATE':              ['STATE', 'COUNTRY'],
+  'COUNTY':             ['COUNTRY', 'STATE'],
+  'STREET':             ['STREET'],
+  'BUILDINGNUMBER':     ['BUILDING'],
+  'SECONDARYADDRESS':   ['SECADDRESS'],
+  'ZIPCODE':            ['POSTCODE'],
+  'NEARBYGPSCOORDINATE': ['GEOCOORD'],
+  'SEX':                ['SEX'],
+  'GENDER':             ['SEX'],
+  'PIN':                ['PASS'],
+  'PASSWORD':           ['PASS'],
+  'CREDITCARDISSUER':   ['CARDISSUER'],
+  'PREFIX':             ['TITLE'],
+  // names
+  'FIRSTNAME':          ['GIVENNAME1', 'GIVENNAME2'],
+  'MIDDLENAME':         ['GIVENNAME2', 'GIVENNAME1'],
+  'LASTNAME':           ['LASTNAME1', 'LASTNAME2', 'LASTNAME3'],
+  // IP variants
+  'IP':                 ['IP'],
+  'IPV4':               ['IP'],
+  'IPV6':               ['IP'],
+  // ID-shaped categories — DeBERTa lumps these into ACCOUNTNUMBER
+  'ACCOUNTNUMBER':      ['IDCARD', 'PASSPORT', 'DRIVERLICENSE', 'SOCIALNUMBER'],
+  'CREDITCARDNUMBER':   ['IDCARD'],
+  'MASKEDNUMBER':       ['IDCARD'],
+  'IBAN':               ['IDCARD'],
+  'BIC':                ['IDCARD'],
+  'BITCOINADDRESS':     ['IDCARD'],
+  'ETHEREUMADDRESS':    ['IDCARD'],
+  'LITECOINADDRESS':    ['IDCARD'],
+  'PHONEIMEI':          ['IDCARD'],
+  'VEHICLEVIN':         ['IDCARD'],
+  'VEHICLEVRM':         ['IDCARD'],
+  // Job-related labels — most map to TITLE in this taxonomy
+  'JOBTITLE':           ['TITLE'],
+  'JOBTYPE':            ['TITLE'],
+  'JOBAREA':            ['TITLE'],
+  // Out-of-scope: present in DeBERTa but the 300k dataset doesn't
+  // track these. We filter rather than penalise.
+  'AGE':                undefined,
+  'AMOUNT':             undefined,
+  'CURRENCY':           undefined,
+  'CURRENCYCODE':       undefined,
+  'CURRENCYNAME':       undefined,
+  'CURRENCYSYMBOL':     undefined,
+  'EYECOLOR':           undefined,
+  'HEIGHT':             undefined,
+  'USERAGENT':          undefined,
+  'URL':                undefined,
+  'ORDINALDIRECTION':   undefined,
+  'COMPANYNAME':        undefined,
+  'MAC':                undefined,
+  'CREDITCARDCVV':      undefined,
+  'ACCOUNTNAME':        ['USERNAME'],   // close enough
 };
 
-// Allow the type-aware match to accept "any plausible mapping" — gold
-// label PASSPORT can be hit by ML labels that map to PASSPORT, and gold
-// label USERNAME (which regex never covers) is now reachable through
-// ML labels mapping to USERNAME. Built dynamically from LABEL_MAP plus
-// the new ML categories.
-const ML_GOLD_ACCEPTANCE = {
-  ...LABEL_MAP,
-  USERNAME: ['USERNAME'],
-  TIME: ['TIME'],
-  SEX: ['SEX'],
-  TITLE: ['TITLE'],
-  GEOCOORD: ['GEOCOORD'],
-  CARDISSUER: ['CARDISSUER'],
-  DRIVERLICENSE: ['DRIVERLICENSE'],
+// OpenAI Privacy Filter — 8 PII categories. The 300k gold scheme is
+// finer-grained, so each PF label fans out to multiple gold labels.
+const OPENAI_PF_TO_GOLD = {
+  'private_email':   ['EMAIL'],
+  'private_phone':   ['TEL'],
+  'private_url':     [],          // gold has no URL — in-scope but unmatchable type-wise
+  'private_date':    ['DATE', 'BOD', 'TIME'],
+  'private_person':  ['GIVENNAME1', 'GIVENNAME2', 'LASTNAME1', 'LASTNAME2', 'LASTNAME3', 'USERNAME', 'TITLE'],
+  'private_address': ['STREET', 'BUILDING', 'SECADDRESS', 'CITY', 'STATE', 'COUNTRY', 'POSTCODE', 'GEOCOORD'],
+  'account_number':  ['IDCARD', 'PASSPORT', 'DRIVERLICENSE', 'SOCIALNUMBER', 'CARDISSUER'],
+  'secret':          ['PASS'],
+};
+
+// GLiNER label → gold-label set.
+const GLINER_TO_GOLD = {
+  'person name':           ['GIVENNAME1', 'GIVENNAME2', 'LASTNAME1', 'LASTNAME2', 'LASTNAME3'],
+  'first name':            ['GIVENNAME1', 'GIVENNAME2'],
+  'last name':             ['LASTNAME1', 'LASTNAME2', 'LASTNAME3'],
+  'title':                 ['TITLE'],
+  'email address':         ['EMAIL'],
+  'phone number':          ['TEL'],
+  'date of birth':         ['BOD'],
+  'date':                  ['DATE'],
+  'time':                  ['TIME'],
+  'address':               ['STREET', 'BUILDING', 'SECADDRESS', 'CITY', 'STATE', 'COUNTRY', 'POSTCODE'],
+  'street address':        ['STREET'],
+  'city':                  ['CITY'],
+  'state':                 ['STATE'],
+  'country':               ['COUNTRY'],
+  'postal code':           ['POSTCODE'],
+  'street':                ['STREET'],
+  'building':              ['BUILDING'],
+  'secondary address':     ['SECADDRESS'],
+  'geographic coordinates': ['GEOCOORD'],
+  'id card':               ['IDCARD'],
+  'social security number': ['SOCIALNUMBER'],
+  'passport number':       ['PASSPORT'],
+  'driver license':        ['DRIVERLICENSE'],
+  'username':              ['USERNAME'],
+  'ip address':            ['IP'],
+  'password':              ['PASS'],
+  'sex':                   ['SEX'],
+  'card issuer':           ['CARDISSUER'],
 };
 
 function spanOverlap(a, b) { return a.start < b.end && b.start < a.end; }
@@ -128,22 +173,46 @@ function loadJsonl(p) {
   return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
 }
 
-function loadMlPreds(name, n) {
+function loadMlPreds(name, n, mapTable) {
   const p = path.join(PREDS_DIR, `${name}.jsonl`);
   if (!fs.existsSync(p)) return null;
   const arr = new Array(n).fill(null).map(() => []);
+  let kept = 0, dropped = 0;
   for (const line of fs.readFileSync(p, 'utf8').split('\n').filter(Boolean)) {
     const e = JSON.parse(line);
     if (e.idx < n) {
-      arr[e.idx] = (e.spans || []).map(s => ({
-        start: s.start, end: s.end,
-        type: ML_LABEL_TO_TYPE[String(s.label || '').toLowerCase()] || 'REDACTED',
-        label: String(s.label || '').toLowerCase(),
-        score: s.score,
-      }));
+      const out = [];
+      for (const s of (e.spans || [])) {
+        const lbl = String(s.label || '').toUpperCase();
+        const lblLc = String(s.label || '').toLowerCase();
+        // Look up the prediction's label in the map. The map keys are
+        // case-sensitive to the model's actual output (uppercase for
+        // DeBERTa, lowercase phrase for GLiNER). Try both case forms.
+        const accepted =
+          (lbl in mapTable) ? mapTable[lbl] :
+          (lblLc in mapTable) ? mapTable[lblLc] : null;
+        if (accepted === undefined) { dropped++; continue; }     // out-of-scope, drop
+        if (accepted === null)      { kept++; out.push({ start: s.start, end: s.end, accepted: [], score: s.score, label: lbl }); continue; }
+        kept++;
+        out.push({ start: s.start, end: s.end, accepted, score: s.score, label: lbl });
+      }
+      arr[e.idx] = out;
     }
   }
+  console.log(`  ${name}: kept ${kept}, dropped (out-of-scope) ${dropped}`);
   return arr;
+}
+
+// Load regex predictions (synchronous detection); attach acceptance.
+function loadRegexPreds(entries) {
+  return entries.map(e => detectPII(e.source_text).map(d => {
+    // For each regex type, find which gold labels this span could match.
+    const accepted = [];
+    for (const [goldLabel, types] of Object.entries(REGEX_GOLD_ACCEPTANCE)) {
+      if (types.includes(d.type)) accepted.push(goldLabel);
+    }
+    return { start: d.start, end: d.end, accepted, type: d.type };
+  }));
 }
 
 // Merge regex spans + ML spans. Regex always wins on overlap.
@@ -165,29 +234,28 @@ function f1(tp, fp, fn) {
   return { p, r, f };
 }
 
-function score(entries, getPreds, acceptance) {
-  let strict = { tp: 0, fp: 0, fn: 0 }, lenient = { tp: 0, fp: 0, fn: 0 };
-  let strictAny = { tp: 0, fp: 0, fn: 0 }, lenientAny = { tp: 0, fp: 0, fn: 0 };
-  const byLabel = {}; // gold label → { tp, fn } for lenient any-type
+function score(entries, getPreds) {
+  const lenientType = { tp: 0, fp: 0, fn: 0 };
+  const lenientAny  = { tp: 0, fp: 0, fn: 0 };
+  const strictType  = { tp: 0, fp: 0, fn: 0 };
+  const strictAny   = { tp: 0, fp: 0, fn: 0 };
+  const byLabel = {};
 
   for (let idx = 0; idx < entries.length; idx++) {
-    const e = entries[idx];
-    const gold = e.privacy_mask || [];
+    const gold = entries[idx].privacy_mask || [];
     const pred = getPreds(idx);
 
     for (const [m, matchFn, anyM] of [
-      [strict, spanExact, strictAny],
-      [lenient, spanOverlap, lenientAny],
+      [strictType, spanExact, strictAny],
+      [lenientType, spanOverlap, lenientAny],
     ]) {
-      // type-aware
       const gU = new Array(gold.length).fill(false);
       const pU = new Array(pred.length).fill(false);
       for (let i = 0; i < pred.length; i++) {
         for (let j = 0; j < gold.length; j++) {
           if (pU[i] || gU[j]) continue;
           if (!matchFn(pred[i], gold[j])) continue;
-          const accepted = acceptance[gold[j].label] || [];
-          if (accepted.includes(pred[i].type)) {
+          if ((pred[i].accepted || []).includes(gold[j].label)) {
             m.tp++; pU[i] = true; gU[j] = true; break;
           }
         }
@@ -195,7 +263,6 @@ function score(entries, getPreds, acceptance) {
       for (let i = 0; i < pred.length; i++) if (!pU[i]) m.fp++;
       for (let j = 0; j < gold.length; j++) if (!gU[j]) m.fn++;
 
-      // any-type
       const gU2 = new Array(gold.length).fill(false);
       const pU2 = new Array(pred.length).fill(false);
       for (let i = 0; i < pred.length; i++) {
@@ -209,7 +276,6 @@ function score(entries, getPreds, acceptance) {
       for (let i = 0; i < pred.length; i++) if (!pU2[i]) anyM.fp++;
       for (let j = 0; j < gold.length; j++) if (!gU2[j]) anyM.fn++;
 
-      // per-label only on the lenient any-type pass (most informative)
       if (matchFn === spanOverlap) {
         for (let j = 0; j < gold.length; j++) {
           const lbl = gold[j].label;
@@ -220,7 +286,7 @@ function score(entries, getPreds, acceptance) {
       }
     }
   }
-  return { strict, lenient, strictAny, lenientAny, byLabel };
+  return { strictType, lenientType, strictAny, lenientAny, byLabel };
 }
 
 function row(label, m) {
@@ -230,14 +296,13 @@ function row(label, m) {
 
 function reportScenario(name, s) {
   console.log(`\n## ${name}`);
-  console.log(`  ${row('STRICT  type-aware', s.strict)}`);
+  console.log(`  ${row('STRICT  type-aware', s.strictType)}`);
   console.log(`  ${row('STRICT  any-type',   s.strictAny)}`);
-  console.log(`  ${row('LENIENT type-aware', s.lenient)}`);
+  console.log(`  ${row('LENIENT type-aware', s.lenientType)}`);
   console.log(`  ${row('LENIENT any-type',   s.lenientAny)}`);
 }
 
 function reportPerLabel(scenarios) {
-  // Aggregated table: per gold label, recall under each scenario (any-type lenient).
   const labels = new Set();
   for (const s of Object.values(scenarios)) for (const k of Object.keys(s.byLabel)) labels.add(k);
   const lblArr = [...labels].sort();
@@ -262,23 +327,22 @@ function main() {
   const entries = loadJsonl(INPUT);
   console.log(`Loaded ${entries.length} entries`);
 
-  // 1. regex predictions in-memory
   console.log(`Running regex on every entry...`);
   const t0 = Date.now();
-  const regexPred = entries.map(e => detectPII(e.source_text));
+  const regexPred = loadRegexPreds(entries);
   console.log(`  done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-  // 2. load ML predictions
-  const mlInt8  = loadMlPreds('gliner_int8', entries.length);
-  const mlFp32  = loadMlPreds('gliner_fp32', entries.length);
-  const mlDeb   = loadMlPreds('deberta',     entries.length);
-  console.log(`ML predictions loaded: gliner_int8=${mlInt8?'yes':'NO'}, gliner_fp32=${mlFp32?'yes':'NO'}, deberta=${mlDeb?'yes':'NO'}`);
+  const mlInt8 = loadMlPreds('gliner_int8', entries.length, GLINER_TO_GOLD);
+  const mlFp32 = loadMlPreds('gliner_fp32', entries.length, GLINER_TO_GOLD);
+  const mlDeb  = loadMlPreds('deberta',     entries.length, DEBERTA_TO_GOLD);
+  const mlOAI  = loadMlPreds('openai_pf',   entries.length, OPENAI_PF_TO_GOLD);
 
   const scenarios = {};
-  scenarios['regex-only']        = score(entries, i => regexPred[i], LABEL_MAP);
-  if (mlInt8) scenarios['regex+gliner_int8']  = score(entries, i => mergeSpans(regexPred[i], mlInt8[i]),  ML_GOLD_ACCEPTANCE);
-  if (mlFp32) scenarios['regex+gliner_fp32']  = score(entries, i => mergeSpans(regexPred[i], mlFp32[i]),  ML_GOLD_ACCEPTANCE);
-  if (mlDeb)  scenarios['regex+deberta_base'] = score(entries, i => mergeSpans(regexPred[i], mlDeb[i]),   ML_GOLD_ACCEPTANCE);
+  scenarios['regex-only']        = score(entries, i => regexPred[i]);
+  if (mlInt8) scenarios['regex+gliner_int8']  = score(entries, i => mergeSpans(regexPred[i], mlInt8[i]));
+  if (mlFp32) scenarios['regex+gliner_fp32']  = score(entries, i => mergeSpans(regexPred[i], mlFp32[i]));
+  if (mlDeb)  scenarios['regex+deberta_base'] = score(entries, i => mergeSpans(regexPred[i], mlDeb[i]));
+  if (mlOAI)  scenarios['regex+openai_pf']    = score(entries, i => mergeSpans(regexPred[i], mlOAI[i]));
 
   for (const [name, s] of Object.entries(scenarios)) reportScenario(name, s);
   reportPerLabel(scenarios);
