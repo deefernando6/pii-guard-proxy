@@ -61,6 +61,9 @@ REGEX_GOLD_ACCEPTANCE.COUNTRY = ['ADDRESS', 'COUNTRY'];
 REGEX_GOLD_ACCEPTANCE.STATE = ['ADDRESS', 'US_STATE'];
 REGEX_GOLD_ACCEPTANCE.DATE = ['DOB'];
 REGEX_GOLD_ACCEPTANCE.BOD = ['DOB'];
+REGEX_GOLD_ACCEPTANCE.GEOCOORD = ['GEOCOORD'];
+REGEX_GOLD_ACCEPTANCE.IDCARD = ['NIC_LK','AADHAAR','PAN_INDIA','PASSPORT','NIN_UK','SSN','IDCARD'];
+REGEX_GOLD_ACCEPTANCE.DRIVERLICENSE = ['DRIVERLICENSE'];
 // Field-label-based extractors emit standard proxy types but for
 // gold labels we hadn't covered before (USERNAME).  Make those explicit:
 REGEX_GOLD_ACCEPTANCE.USERNAME = ['USERNAME', 'NAME'];
@@ -403,17 +406,19 @@ function main() {
   const regexPred = loadRegexPreds(entries);
   console.log(`  done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-  const mlInt8 = loadMlPreds('gliner_int8', entries.length, GLINER_TO_GOLD);
-  const mlFp32 = loadMlPreds('gliner_fp32', entries.length, GLINER_TO_GOLD);
-  const mlDeb  = loadMlPreds('deberta',     entries.length, DEBERTA_TO_GOLD);
-  const mlOAI  = loadMlPreds('openai_pf',   entries.length, OPENAI_PF_TO_GOLD);
+  const mlInt8 = loadMlPreds('gliner_int8',      entries.length, GLINER_TO_GOLD);
+  const mlBase = loadMlPreds('gliner_int8_base', entries.length, GLINER_TO_GOLD);
+  const mlFp32 = loadMlPreds('gliner_fp32',      entries.length, GLINER_TO_GOLD);
+  const mlDeb  = loadMlPreds('deberta',          entries.length, DEBERTA_TO_GOLD);
+  const mlOAI  = loadMlPreds('openai_pf',        entries.length, OPENAI_PF_TO_GOLD);
 
   const scenarios = {};
   scenarios['regex-only']        = score(entries, i => regexPred[i]);
-  if (mlInt8) scenarios['regex+gliner_int8']  = score(entries, i => mergeSpans(regexPred[i], mlInt8[i]));
-  if (mlFp32) scenarios['regex+gliner_fp32']  = score(entries, i => mergeSpans(regexPred[i], mlFp32[i]));
-  if (mlDeb)  scenarios['regex+deberta_base'] = score(entries, i => mergeSpans(regexPred[i], mlDeb[i]));
-  if (mlOAI)  scenarios['regex+openai_pf']    = score(entries, i => mergeSpans(regexPred[i], mlOAI[i]));
+  if (mlInt8) scenarios['regex+gliner_small']  = score(entries, i => mergeSpans(regexPred[i], mlInt8[i]));
+  if (mlBase) scenarios['regex+gliner_base']   = score(entries, i => mergeSpans(regexPred[i], mlBase[i]));
+  if (mlFp32) scenarios['regex+gliner_fp32']   = score(entries, i => mergeSpans(regexPred[i], mlFp32[i]));
+  if (mlDeb)  scenarios['regex+deberta_base']  = score(entries, i => mergeSpans(regexPred[i], mlDeb[i]));
+  if (mlOAI)  scenarios['regex+openai_pf']     = score(entries, i => mergeSpans(regexPred[i], mlOAI[i]));
 
   for (const [name, s] of Object.entries(scenarios)) reportScenario(name, s);
   reportPerLabel(scenarios);

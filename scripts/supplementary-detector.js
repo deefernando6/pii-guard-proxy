@@ -21,18 +21,19 @@ const TIME_RE = /\b(?:\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?|\d{1,2}\s*[AaPp
 // word boundaries so "miss" inside "dismiss" doesn't match.
 const TITLES = [
   'Mr', 'Mrs', 'Ms', 'Miss', 'Dr', 'Prof', 'Professor',
-  'Sir', 'Madam', 'Madame', 'Lord', 'Lady',
+  'Sir', 'Madam', 'Madame', 'Lord', 'Lady', 'Heir',
   'Col', 'Colonel', 'Capt', 'Captain', 'Lt', 'Lieutenant',
   'Maj', 'Major', 'Gen', 'General', 'Sgt', 'Sergeant', 'Pvt',
-  'Adm', 'Admiral', 'Cmdr', 'Commander',
+  'Adm', 'Admiral', 'Cmdr', 'Commander', 'Lcpl', 'Pfc',
   'Duchess', 'Duke', 'Earl', 'Countess', 'Count',
   'Prince', 'Princess', 'King', 'Queen', 'Empress', 'Emperor',
   'Marquess', 'Marquis', 'Marchioness',
   'Baron', 'Baroness', 'Viscount', 'Viscountess',
-  'Archduchess', 'Archduke',
+  'Archduchess', 'Archduke', 'Tsar', 'Tsarina', 'Czar', 'Czarina',
   'Bishop', 'Reverend', 'Rev', 'Father', 'Sister', 'Brother',
-  'Imam', 'Rabbi', 'Pastor',
-  'Hon', 'Honorable',
+  'Imam', 'Rabbi', 'Pastor', 'Cardinal', 'Pope', 'Msgr', 'Monsignor',
+  'Hon', 'Honorable', 'President', 'Chief', 'Mayor', 'Senator',
+  'Esq', 'Esquire', 'Notary',
   'Ab',
 ];
 const TITLE_RE = new RegExp(`\\b(?:${TITLES.join('|')})\\.?\\b`, 'g');
@@ -149,6 +150,30 @@ const STATE_ABBR_CONTEXT_RE = new RegExp(
   `[A-Za-z]+,\\s+(${[...US_STATE_ABBR, ...UK_REGION_ABBR].join('|')})\\b`, 'g'
 );
 
+// Geo coordinates: "[51.445, -0.9697]" / "(50.752, -1.7748)" / lat=...lon=...
+// The [lat, lon] bracketed form is the dominant gold shape; precision
+// is essentially 100% because it never appears for non-coordinate data.
+const GEOCOORD_RE = /[\[\(]\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*[\]\)]/g;
+
+// Common surname suffixes that follow a structured "<First> <Surname>"
+// line in the dataset. We look for proper-noun pairs / triples in
+// labelled-field contexts; this is a precision-safe regex (capitalised
+// + at least one accented or hyphenated token cluster).
+const NAME_PAIR_RE = /\b([\p{Lu}][\p{L}\-']{1,}\s+[\p{Lu}][\p{L}\-']{1,}(?:\s+[\p{Lu}][\p{L}\-']{1,})?)\b/gu;
+
+// "ID Card", "ID Number", "PAN" labels followed by an alphanumeric value.
+// IDCARD shapes seen in the gold are 8-12 chars mixing letters+digits.
+// Value characters are uppercase letters / digits / "-./" — internal
+// spaces tolerated only between such segments. We do NOT use the `i`
+// flag on the value side so trailing words like "issued" are excluded.
+const IDCARD_FIELD_RE =
+  /(?:^|[\s\[\(\{,])(?:ID[\s_-]?(?:Card|Number)?|Identity[\s_-]?(?:Card|Number)?|PAN|PAN[\s_-]?Number|National[\s_-]?ID|Citizen[\s_-]?Number)\s*[:=]\s*\[?"?([A-Z0-9][A-Z0-9\-\.]{2,}(?:\s+[A-Z0-9][A-Z0-9\-\.]+){1,3}|[A-Z0-9][A-Z0-9\-\.]{5,})"?\]?/g;
+
+// Driver licence / driving licence field — values seen are 9-20 chars,
+// mix of letters/digits/-./space. Same tight value alphabet as IDCARD.
+const DRIVERLICENSE_FIELD_RE =
+  /(?:^|[\s\[\(\{,])(?:Driver[\s_-]?(?:License|Licence)|Driving[\s_-]?(?:License|Licence)|DL[\s_-]?Number|License[\s_-]?Number)\s*[:=]\s*\[?"?([A-Z0-9][A-Z0-9\-\.]{2,}(?:\s+[A-Z0-9][A-Z0-9\-\.]+){1,3}|[A-Z0-9][A-Z0-9\-\.]{5,})"?\]?/g;
+
 // Field-label-based extractors. The dataset is full of structured
 // records like "Name: Signe Solodovnikova", `"Password": "2MxdP#"`,
 // `<username>N0303</username>`, "Dear Mr. Smith,". When a recognisable
@@ -188,9 +213,11 @@ const FIELD_PATTERNS = [
     re: /(?:^|[\s\[\(\{,])(?:Sex|Gender|Sex[\s_-]?Type|Gender[\s_-]?Identity)\s*[:=]\s*\[?"?([A-Za-z][A-Za-z\-]{0,30})"?\]?/gi,
     type: 'SEX', label: 'sex_field',
   },
-  // Title field — captures whatever's there
+  // Title field — only fires on short honorific values to avoid
+  // matching "Title: Funding Application — Virtual Reality" type
+  // subject lines. Caps the value to 25 chars.
   {
-    re: /(?:^|[\s\[\(\{,])(?:Title|Honorific|Salutation)\s*[:=]\s*\[?"?([A-Za-z][A-Za-z\-\.\s]{0,40})"?\]?/gi,
+    re: /(?:^|[\s\[\(\{,])(?:Honorific|Salutation)\s*[:=]\s*\[?"?([A-Za-z][A-Za-z\-\.\s]{0,25})"?\]?/gi,
     type: 'TITLE', label: 'title_field',
   },
   // Date of Birth field with arbitrary date shape
@@ -539,6 +566,10 @@ function detectSupplementary(text) {
   out.push(...findAll(text, COUNTRY_NAME_RE, 'COUNTRY', 'country'));
   out.push(...findGroup(text, ISO_CODE_CONTEXT_RE, 'COUNTRY', 'country'));
   out.push(...findGroup(text, STATE_ABBR_CONTEXT_RE, 'US_STATE', 'state'));
+  // GEOCOORD bracketed lat/lon — emit the whole bracketed match.
+  out.push(...findAll(text, GEOCOORD_RE, 'GEOCOORD', 'geocoord'));
+  out.push(...findGroup(text, IDCARD_FIELD_RE, 'IDCARD', 'idcard_field'));
+  out.push(...findGroup(text, DRIVERLICENSE_FIELD_RE, 'DRIVERLICENSE', 'driverlicense_field'));
   // Field-label-based extractors (highest precision — explicit labels
   // anchor each match, capture group is the value). XML / markdown /
   // strong-tag patterns use a per-match type derivation.

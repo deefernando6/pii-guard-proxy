@@ -1,0 +1,24 @@
+# Configuration for the pii-guard-proxy systemd service.
+# Restart the service after changes:  sudo systemctl restart pii-guard-proxy
+#
+#PII_GUARD_PORT=8765
+#PII_GUARD_HEADLESS_ACTION=anonymize     # anonymize | accept | decline
+#PII_GUARD_VERBOSE=1
+#PII_GUARD_REVEAL=true
+#PII_GUARD_MITM=true
+#
+# Chromium-family browsers are SIGTERM'd by the package's install and
+# remove/purge scripts so they drop the cached managed-policy on next
+# launch. Service start/stop and the `pii-guard` CLI never kill
+# browsers — only `apt install`/`dpkg -i` and `apt remove`/`dpkg -P`.
+# Set this to false to suppress the kill on install/remove as well.
+#PII_GUARD_KILL_BROWSERS_ON_POLICY_CHANGE=true
+#
+# Response-handling mode:
+#   default (unset/false): full-response buffering. Holds the whole LLM
+#     reply in memory before running placeholder revert and shipping it.
+#     Reliable revert; user sees the full response at once.
+#   true: streaming mode. Flushes chunks as they arrive with
+#     chunk-boundary heuristics. Lower latency, but can leave some
+#     placeholders un-reverted in edge cases.
+#PII_GUARD_STREAMING=false

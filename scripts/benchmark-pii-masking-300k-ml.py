@@ -79,7 +79,7 @@ def run_gliner(entries, *, name, load_onnx=False):
     for i, e in enumerate(entries):
         text = e['source_text']
         try:
-            ents = model.predict_entities(text, GLINER_LABELS, threshold=0.5)
+            ents = model.predict_entities(text, GLINER_LABELS, threshold=0.30)
         except Exception as exc:
             ents = []
             if i < 5:

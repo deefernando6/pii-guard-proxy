@@ -2,7 +2,6 @@
 /node_modules/
 
 # Older release artifacts — kept on disk for reference, not in git.
-dist/pii-guard-proxy_1.1*
 dist/pii-guard-proxy_1.2*
 
 # Benchmark data — re-downloaded from huggingface.co on demand.
