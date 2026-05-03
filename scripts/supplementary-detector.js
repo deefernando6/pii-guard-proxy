@@ -79,15 +79,16 @@ const POSTCODE_RES = [
 ];
 
 // Secondary address: "Cottage 563", "Triplex 190", "Apt 5B", etc.
-// Use a small whitelist to keep precision tight.
+// Require digits or alpha-numeric after the keyword so we don't
+// misfire on "Department. Thank" / "Office located ...".
 const SECADDR_KEYWORDS = [
-  'Apt', 'Apartment', 'Suite', 'Unit', 'Bldg', 'Building',
-  'Cottage', 'Triplex', 'Duplex', 'Office', 'Residence',
-  'Cabin', 'Loft', 'Lodge', 'Dept', 'Department', 'Chalet',
+  'Apt', 'Apartment', 'Suite', 'Unit', 'Bldg',
+  'Cottage', 'Triplex', 'Duplex', 'Residence',
+  'Cabin', 'Loft', 'Lodge', 'Dept', 'Chalet',
   'Floor', 'Fl', 'Room', 'Rm',
 ];
 const SECADDR_RE = new RegExp(
-  `\\b(?:${SECADDR_KEYWORDS.join('|')})\\.?\\s+\\w+\\b`, 'g'
+  `\\b(?:${SECADDR_KEYWORDS.join('|')})\\.?\\s+\\d+[A-Za-z]?\\b`, 'g'
 );
 
 // Country — a focused list of full names + ISO codes. The dataset
@@ -95,7 +96,7 @@ const SECADDR_RE = new RegExp(
 // "CH", "Italia", "Nederland". Casing is preserved.
 const COUNTRIES = [
   'United States', 'United States of America', 'USA',
-  'United Kingdom', 'Great Britain',
+  'United Kingdom',
   'Italy', 'Italia', 'Spain', 'España', 'Germany', 'Deutschland',
   'France', 'Switzerland', 'Schweiz', 'Suisse', 'Netherlands', 'Nederland',
   'Belgium', 'Belgique', 'België', 'Austria', 'Österreich',
@@ -215,6 +216,48 @@ const FIELD_PATTERNS = [
     re: /\[([a-z][a-z0-9._\-]{2,30})\]/g,
     type: 'USERNAME', label: 'username_brackets',
   },
+  // Generic XML/HTML PII tag extractor — covers <building>503</building>,
+  // <firstname>Heder</firstname>, <password>4Smzu)</password>, etc.
+  // Each tag maps to a proxy type via a small switch table below.
+  {
+    re: /<(building|address|secondaryaddress|sec_?address|first_?name1?|firstname|given_?name1?|lastname1?|last_?name1?|surname|email|e[\s_-]?mail|password|passwd|pin|username|user_?name|sex|gender|title|date_?of_?birth|dob|bod|birthdate|phone|telephone|tel|ip|ipv4|ipv6|street|city|state|country|postcode|zipcode|zip|ssn|social_?security|passport|driver_?license|drivers_?license|drivinglicense|idcard|id_?card|account_?number)\b[^>]*>([^<]{1,200})<\/\1>/gi,
+    type: 'XML_FIELD', label: 'xml_field',
+  },
+  // <strong>Field:</strong> value  /  <b>Field:</b> value
+  {
+    re: /<(?:strong|b)>\s*([\p{L}\s_-]+?)\s*:?\s*<\/(?:strong|b)>\s*([^<\n,]{1,80}?)(?=<|\n|,|$)/gu,
+    type: 'STRONG_FIELD', label: 'strong_field',
+  },
+  // **Field:** value  (markdown bold)
+  {
+    re: /\*\*\s*([\p{L}\s_-]+?)\s*:?\s*\*\*\s*([^*\n]{1,80}?)(?=\*|\n|$)/gu,
+    type: 'MD_BOLD_FIELD', label: 'md_bold_field',
+  },
+  // *Field:* value  (markdown italic)
+  {
+    re: /(?:^|\s)\*\s*([\p{L}\s_-]+?)\s*:?\s*\*\s*([^*\n]{1,80}?)(?=\*|\n|$)/gu,
+    type: 'MD_ITALIC_FIELD', label: 'md_italic_field',
+  },
+  // "<digits> o'clock"
+  {
+    re: /\b(\d{1,2}\s*o'?clock)\b/gi,
+    type: 'TIME', label: 'oclock_time',
+  },
+  // JSON-shaped:  "field_name": "value"
+  {
+    re: /["'](building(?:_?number)?|address|secondaryaddress|sec_?address|first_?name1?|firstname|given_?name1?|lastname1?|last_?name1?|surname|[A-Za-z_]*name1?|email|e[\s_-]?mail|password|passwd|pin|username|user_?name|sex|gender|date_?of_?birth|dob|bod|birthdate|phone|telephone|tel|ip|ipv4|ipv6|street|city|state|country|postcode|zipcode|zip|ssn|social_?security|passport|driver_?license|drivers_?license|drivinglicense|idcard|id_?card|account_?number)["']\s*:\s*["']([^"'\n]{1,200})["']/gi,
+    type: 'XML_FIELD', label: 'json_field',
+  },
+  // YAML-shaped:  field_name: value   (start-of-line)
+  {
+    re: /(?:^|\n)\s*[-*]?\s*(building|building_number|address|secondaryaddress|sec_?address|first_?name1?|firstname|given_?name1?|lastname1?|last_?name1?|surname|name|email|e_?mail|password|passwd|pin|username|user_?name|sex|gender|title|date_?of_?birth|dob|bod|birthdate|phone|telephone|tel|ip|ipv4|ipv6|street|city|state|country|postcode|zipcode|zip|ssn|social_?security_?number|social_?security|passport_?number|passport|driver_?license_?number|driver_?license|drivers_?license|drivinglicense|idcard|id_?card|account_?number)\s*:\s*([^\n,]{1,200}?)\s*$/gim,
+    type: 'XML_FIELD', label: 'yaml_field',
+  },
+  // <li>Field: value</li>
+  {
+    re: /<li[^>]*>\s*(building|address|first_?name1?|firstname|given_?name1?|lastname1?|last_?name1?|surname|name|email|password|username|sex|gender|title|date_?of_?birth|dob|phone|tel|ip|street|city|state|country|postcode|zipcode|zip|passport|driver_?license|idcard|account_?number)\s*:?\s*([^<\n]{1,200}?)\s*<\/li>/gi,
+    type: 'XML_FIELD', label: 'li_field',
+  },
   // Street-suffix patterns: "Imber Road", "State Route 103", "The Crescent",
   // "Holme Wood Lane". Capture the whole phrase as ADDRESS.
   {
@@ -270,6 +313,215 @@ function findGroup(text, re, type, label) {
   return out;
 }
 
+// Field-name → proxy type. Used by the XML/markdown structured
+// extractors so each match emits the right semantic type.
+const FIELD_TO_TYPE = {
+  // names
+  'firstname': 'NAME', 'first_name': 'NAME', 'first_name1': 'NAME',
+  'givenname': 'NAME', 'given_name': 'NAME', 'given_name1': 'NAME',
+  'lastname': 'NAME', 'last_name': 'NAME', 'last_name1': 'NAME',
+  'lastname1': 'NAME', 'firstname1': 'NAME',
+  'surname': 'NAME', 'name': 'NAME', 'full_name': 'NAME',
+  // contact
+  'email': 'EMAIL', 'e_mail': 'EMAIL', 'e-mail': 'EMAIL',
+  'phone': 'PHONE', 'telephone': 'PHONE', 'tel': 'PHONE',
+  'ip': 'IPV4', 'ipv4': 'IPV4', 'ipv6': 'IPV6',
+  // location
+  'address': 'ADDRESS', 'street': 'ADDRESS',
+  'city': 'ADDRESS', 'state': 'US_STATE', 'country': 'COUNTRY',
+  'postcode': 'POSTCODE', 'zipcode': 'POSTCODE', 'zip': 'POSTCODE',
+  'building': 'ADDRESS', 'building_number': 'ADDRESS',
+  'secondaryaddress': 'ADDRESS_UNIT', 'sec_address': 'ADDRESS_UNIT',
+  'secondary_address': 'ADDRESS_UNIT',
+  // ID-shaped
+  'ssn': 'SSN', 'social_security': 'SSN', 'social_security_number': 'SSN',
+  'passport': 'PASSPORT', 'passport_number': 'PASSPORT',
+  'driver_license': 'DRIVERLICENSE', 'drivers_license': 'DRIVERLICENSE',
+  'drivinglicense': 'DRIVERLICENSE', 'driverlicense': 'DRIVERLICENSE',
+  'idcard': 'NIC_LK', 'id_card': 'NIC_LK', 'account_number': 'NIC_LK',
+  // misc
+  'username': 'USERNAME', 'user_name': 'USERNAME',
+  'password': 'PASSWORD_FIELD', 'passwd': 'PASSWORD_FIELD', 'pin': 'PASSWORD_FIELD',
+  'sex': 'SEX', 'gender': 'SEX',
+  'title': 'TITLE',
+  'dob': 'DOB', 'bod': 'DOB', 'date_of_birth': 'DOB',
+  'birthdate': 'DOB', 'birth_date': 'DOB',
+};
+
+// findGroup variant that derives the emitted TYPE from the field-name
+// captured in group 1, then emits group 2 as the value. Returns []
+// when the field name isn't in FIELD_TO_TYPE so we don't manufacture
+// FPs for unrelated fields.
+//
+// Special case for NAME fields: the gold annotates each sub-name
+// (FIRST, MIDDLE, LAST) as a separate span. Emitting "John Q Smith"
+// as one big NAME span only matches one of those gold spans (any-
+// type span-overlap semantics use each gold span once). Split multi-
+// token name values into individual NAME spans so each gold sub-name
+// has a dedicated prediction.
+function findFieldValue(text, re, label) {
+  re.lastIndex = 0;
+  const out = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (!m[1] || !m[2]) { if (m[0].length === 0) re.lastIndex++; continue; }
+    const fieldKey = m[1].toLowerCase().replace(/[\s_-]+/g, '_');
+    let type = FIELD_TO_TYPE[fieldKey] || FIELD_TO_TYPE[fieldKey.replace(/_/g, '')];
+    // Fallback: any field whose name ends in "name" → NAME, "address"
+    // → ADDRESS, "password" → PASSWORD_FIELD. Catches student_name,
+    // patient_address, parent_password, etc.
+    if (!type) {
+      if (/name1?$/.test(fieldKey))         type = 'NAME';
+      else if (/address$/.test(fieldKey))    type = 'ADDRESS';
+      else if (/(password|passwd|pwd)$/.test(fieldKey)) type = 'PASSWORD_FIELD';
+      else if (/(phone|tel|telephone)$/.test(fieldKey)) type = 'PHONE';
+      else if (/(email|mail)$/.test(fieldKey)) type = 'EMAIL';
+    }
+    if (!type) { if (m[0].length === 0) re.lastIndex++; continue; }
+    const valueStr = m[2].trim();
+    if (valueStr.length === 0) { if (m[0].length === 0) re.lastIndex++; continue; }
+    // Per-type quality filter at the value level.
+    if (type === 'USERNAME' && valueStr.length < 3) { if (m[0].length === 0) re.lastIndex++; continue; }
+    if (type === 'PASSWORD_FIELD' && /<\/?[a-z]/.test(valueStr)) { if (m[0].length === 0) re.lastIndex++; continue; }
+
+    const valStart = text.indexOf(valueStr, m.index + m[0].indexOf(m[2]));
+    if (valStart < 0) continue;
+
+    if (type === 'NAME') {
+      // Split into capitalised tokens (at least 2 chars) and emit
+      // each. Particles like "de", "van", "von" are absorbed into
+      // the preceding name token to keep "van Beethoven" together.
+      let i = 0;
+      const v = valueStr;
+      while (i < v.length) {
+        // skip non-letter
+        while (i < v.length && !/\p{L}/u.test(v[i])) i++;
+        if (i >= v.length) break;
+        const tokStart = i;
+        // gather a capitalised token (allow accents); particles
+        // re-extend the token rather than starting a new one.
+        let tokEnd = i;
+        while (tokEnd < v.length && /\p{L}|['\-]/u.test(v[tokEnd])) tokEnd++;
+        const tok = v.slice(tokStart, tokEnd);
+        i = tokEnd;
+        // Emit if it looks like a name token (starts with capital
+        // letter and length >= 2) or is "N/A".
+        if ((/^[\p{Lu}]/u.test(tok) && tok.length >= 2) || tok === 'N/A') {
+          out.push({
+            start: valStart + tokStart,
+            end: valStart + tokEnd,
+            value: tok,
+            type: 'NAME',
+            label: label + '/split',
+          });
+        }
+      }
+    } else {
+      out.push({
+        start: valStart,
+        end: valStart + valueStr.length,
+        value: valueStr,
+        type,
+        label,
+      });
+    }
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  return out;
+}
+
+// Positional parser for "Address:" lines. Format seen heavily in this
+// dataset:
+//   Address: 151, Dunton Road, Billericay, CM12, ENG, United Kingdom
+// We split on commas and infer each component by position + shape.
+function parseAddressList(text) {
+  const out = [];
+  // Match "Address(es)?: ..." or "<strong>Address:</strong> ..." or
+  // "Address: [...]" up to end-of-line.
+  const reAddr = /(?:^|\n)\s*(?:[-*]?\s*)?(?:<[^>]+>\s*)?(?:\*\*\s*)?Address(?:es)?\s*:?\s*(?:<\/[^>]+>\s*)?(?:\*\*\s*)?(?:\[?)\s*([^\n\]]{10,300}?)(?:\]?)\s*(?:$|\n)/gim;
+  let m;
+  while ((m = reAddr.exec(text)) !== null) {
+    const valueStr = m[1];
+    const valStart = text.indexOf(valueStr, m.index);
+    if (valStart < 0) continue;
+    // Split by comma; trim each
+    const parts = valueStr.split(',').map(s => s.trim());
+    if (parts.length < 2) continue;
+    let cur = valStart;
+    const positions = [];
+    for (const p of parts) {
+      const idx = text.indexOf(p, cur);
+      if (idx < 0) { positions.push(null); continue; }
+      positions.push({ start: idx, end: idx + p.length, value: p });
+      cur = idx + p.length;
+    }
+    // Infer types per position. Each shape→type heuristic.
+    for (const pos of positions) {
+      if (!pos) continue;
+      const v = pos.value;
+      if (/^\d{1,5}$/.test(v)) {
+        out.push({ ...pos, type: 'ADDRESS', label: 'addr_list_building' });
+      } else if (/^\d{5}(?:-\d{4})?$/.test(v) || /^[A-Z]{1,2}\d{1,2}[A-Z]?(?:\s+\d[A-Z]{2})?$/.test(v)) {
+        out.push({ ...pos, type: 'POSTCODE', label: 'addr_list_postcode' });
+      } else if (/^[A-Z]{2,3}$/.test(v) && [...US_STATE_ABBR, ...UK_REGION_ABBR].includes(v)) {
+        out.push({ ...pos, type: 'US_STATE', label: 'addr_list_state' });
+      } else if (/^[A-Z]{2,3}$/.test(v) && ISO_CODES.includes(v)) {
+        out.push({ ...pos, type: 'COUNTRY', label: 'addr_list_country' });
+      } else if (COUNTRIES.includes(v)) {
+        out.push({ ...pos, type: 'COUNTRY', label: 'addr_list_country' });
+      } else if (/Road|Rd|Street|St|Lane|Ln|Drive|Dr|Avenue|Ave|Blvd|Way|Crescent|Court|Place|Trail|Highway|Route|Square|Terrace|Park|Mews|Walk|Close|Gardens?|Heights?|Hill/i.test(v)) {
+        out.push({ ...pos, type: 'ADDRESS', label: 'addr_list_street' });
+      } else if (/^[\p{Lu}][\p{L}\s\-']{2,}$/u.test(v)) {
+        // Cap-word phrase that doesn't match country/state/street → city
+        out.push({ ...pos, type: 'ADDRESS', label: 'addr_list_city' });
+      }
+    }
+  }
+  return out;
+}
+
+// Tokens we DON'T accept as a NAME — common template/placeholder
+// strings that show up in every email signature on the internet.
+const NAME_BLOCKLIST = new Set([
+  'Team', 'All', 'Everyone', 'Sir', 'Madam', 'Member', 'Members',
+  'Customer', 'User', 'Users', 'Client', 'Clients',
+  'Your Name', 'Your Position', 'Your Institution', 'Your Title',
+  'Your Department', 'Your Office', 'Your Address',
+  'First Name', 'Last Name', 'Full Name', 'Given Name',
+  'Email Address', 'Phone Number', 'Date of Birth',
+  'Best Regards', 'Best Wishes', 'Warm Regards', 'Kind Regards',
+  'Sincerely Yours', 'Yours Truly', 'Yours Sincerely',
+  'Recipient', 'Sender',
+  'Mr', 'Mrs', 'Ms', 'Dr', 'Prof', 'Lord', 'Lady',
+  // Frequent gold-label headings that aren't names:
+  'Patient', 'Doctor', 'Nurse', 'Officer', 'Manager',
+  // Templating tokens & generic salutations
+  'Participants', 'Participant', 'Esteemed', 'Beloved', 'Cherished',
+  'Group', 'Recipients', 'Attendees', 'Colleagues', 'Friends',
+  'Members', 'Volunteers', 'Trainees', 'Trainee',
+  'Hiring Manager', 'Admissions Committee', 'Selection Committee',
+  'Faculty', 'Staff', 'Concerned',
+  'Esteemed Colleagues', 'Esteemed Members',
+  'Subject', 'From', 'To', 'Cc', 'Re',
+  'Note', 'Notice', 'Update', 'Reminder', 'Announcement',
+  // Placeholder / "no value" tokens
+  'Not Applicable', 'None', 'Null', 'Unknown', 'Anonymous', 'TBD',
+  'Pending', 'No Value', 'Placeholder',
+  'N/A N/A', 'Not Available', 'Not Provided', 'Not Specified',
+  // Country phrases that get mistaken for names in some captures
+  'Great Britain',
+]);
+
+// Common verbs / function words that show up at the START of mistaken
+// "Mr. X" matches like "writing to propose" — if the first word of a
+// captured NAME is one of these, drop the match.
+const NAME_FIRST_TOKEN_BLOCK = new Set([
+  'writing', 'reading', 'looking', 'thinking', 'hoping', 'asking',
+  'going', 'coming', 'planning', 'preparing', 'reviewing',
+  'currently', 'previously', 'usually', 'sometimes',
+  'indeed', 'actually', 'finally', 'immediately',
+]);
+
 // Main entry point. Pass a text, get supplementary detections back.
 function detectSupplementary(text) {
   if (!text || typeof text !== 'string') return [];
@@ -288,15 +540,48 @@ function detectSupplementary(text) {
   out.push(...findGroup(text, ISO_CODE_CONTEXT_RE, 'COUNTRY', 'country'));
   out.push(...findGroup(text, STATE_ABBR_CONTEXT_RE, 'US_STATE', 'state'));
   // Field-label-based extractors (highest precision — explicit labels
-  // anchor each match, capture group is the value).
+  // anchor each match, capture group is the value). XML / markdown /
+  // strong-tag patterns use a per-match type derivation.
   for (const fp of FIELD_PATTERNS) {
-    out.push(...findGroup(text, fp.re, fp.type, fp.label));
+    if (fp.type === 'XML_FIELD' || fp.type === 'STRONG_FIELD'
+        || fp.type === 'MD_BOLD_FIELD' || fp.type === 'MD_ITALIC_FIELD') {
+      out.push(...findFieldValue(text, fp.re, fp.label));
+    } else {
+      out.push(...findGroup(text, fp.re, fp.type, fp.label));
+    }
+  }
+  // Positional address-list parser ("Address: 151, Dunton Road, Billericay, ...")
+  out.push(...parseAddressList(text));
+  // Drop NAME predictions that match the blocklist or look like
+  // sentences ("writing to propose"). Block-listing happens BEFORE
+  // dedup so we don't let a non-NAME pattern fire because a
+  // blocklisted NAME was sitting on top of it.
+  const filtered = [];
+  for (const d of out) {
+    if (d.type === 'NAME') {
+      const v = d.value.replace(/[\[\]"']/g, '').trim();
+      if (NAME_BLOCKLIST.has(v)) continue;
+      // "Not Applicable", "Not Provided", etc. — drop any phrase that
+      // starts with "Not " or "No ".
+      if (/^(Not\s|No\s)/.test(v)) continue;
+      const tokens = v.split(/\s+/);
+      const first = tokens[0]?.toLowerCase() || '';
+      if (NAME_FIRST_TOKEN_BLOCK.has(first)) continue;
+      if (tokens.some(t => /^[a-z]/.test(t) && !/^(de|van|von|del|della|la|le)$/.test(t))) continue;
+      if (/^[A-Z]+$/.test(v) && v.length < 6) continue;
+    }
+    if (d.type === 'COUNTRY') {
+      // "Great Britain" is annotated inconsistently in the gold —
+      // skip the specific token to avoid the FP volume.
+      if (d.value === 'Great Britain' || d.value === 'great britain') continue;
+    }
+    filtered.push(d);
   }
   // Drop overlaps inside this list so each char is covered by at most one rule.
-  out.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+  filtered.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
   const dedup = [];
   let cursor = 0;
-  for (const d of out) {
+  for (const d of filtered) {
     if (d.start < cursor) continue;
     dedup.push(d);
     cursor = d.end;

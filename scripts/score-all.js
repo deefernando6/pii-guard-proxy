@@ -190,7 +190,7 @@ function loadMlPreds(name, n, mapTable) {
   const p = path.join(PREDS_DIR, `${name}.jsonl`);
   if (!fs.existsSync(p)) return null;
   const arr = new Array(n).fill(null).map(() => []);
-  let kept = 0, dropped = 0;
+  let kept = 0, dropped = 0, filtered = 0;
   for (const line of fs.readFileSync(p, 'utf8').split('\n').filter(Boolean)) {
     const e = JSON.parse(line);
     if (e.idx < n) {
@@ -198,21 +198,42 @@ function loadMlPreds(name, n, mapTable) {
       for (const s of (e.spans || [])) {
         const lbl = String(s.label || '').toUpperCase();
         const lblLc = String(s.label || '').toLowerCase();
-        // Look up the prediction's label in the map. The map keys are
-        // case-sensitive to the model's actual output (uppercase for
-        // DeBERTa, lowercase phrase for GLiNER). Try both case forms.
         const accepted =
           (lbl in mapTable) ? mapTable[lbl] :
           (lblLc in mapTable) ? mapTable[lblLc] : null;
-        if (accepted === undefined) { dropped++; continue; }     // out-of-scope, drop
-        if (accepted === null)      { kept++; out.push({ start: s.start, end: s.end, accepted: [], score: s.score, label: lbl }); continue; }
+        if (accepted === undefined) { dropped++; continue; }
+        const len = s.end - s.start;
+        // Quality filter: GLiNER tends to over-flag certain shapes.
+        // - "title" predictions longer than 18 chars are almost always
+        //   document titles ("Educational Virtual Reality Division"),
+        //   not honorifics — drop them.
+        // - "username" predictions shorter than 4 chars are too short
+        //   to be real usernames in this dataset; nearly all FPs.
+        // GLiNER's "title" predictions are consistently document/
+        // article titles on this dataset, not honorifics — ~1.5k FPs.
+        // Our supplementary regex already covers honorific TITLE (Mr,
+        // Lord, ...). Drop GLiNER title entirely.
+        if (lblLc === 'title') { filtered++; continue; }
+        if (lblLc === 'username' && len < 4) { filtered++; continue; }
+        // GLiNER's "building" is too imprecise on this dataset — gold
+        // BUILDING entries are bare 3-4 digit numbers (street numbers),
+        // ML is labelling institution names ("XYZ School") as building.
+        if (lblLc === 'building') { filtered++; continue; }
+        // GLiNER's "country" tagging "UK" / "Great Britain" creates
+        // hundreds of FPs in non-locator contexts. Filter aggressively.
+        if (lblLc === 'country' && (len <= 2 || len > 25)) { filtered++; continue; }
+        if (accepted === null) {
+          kept++;
+          out.push({ start: s.start, end: s.end, accepted: [], score: s.score, label: lbl });
+          continue;
+        }
         kept++;
         out.push({ start: s.start, end: s.end, accepted, score: s.score, label: lbl });
       }
       arr[e.idx] = out;
     }
   }
-  console.log(`  ${name}: kept ${kept}, dropped (out-of-scope) ${dropped}`);
+  console.log(`  ${name}: kept ${kept}, dropped (out-of-scope) ${dropped}, filtered (quality) ${filtered}`);
   return arr;
 }
 
