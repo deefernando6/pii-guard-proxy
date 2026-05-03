@@ -17,6 +17,8 @@ const fs = require('fs');
 const path = require('path');
 const { detectPII } = require(process.env.PII_GUARD_DETECTOR
   || path.join(__dirname, '..', 'lib', 'detector'));
+const { detectSupplementary } = require(process.env.PII_GUARD_SUPPLEMENTARY
+  || path.join(__dirname, 'supplementary-detector'));
 
 const INPUT = process.argv[2]
   || path.join(__dirname, 'data', 'english_validation.jsonl');
@@ -48,9 +50,20 @@ const REGEX_GOLD_ACCEPTANCE = {
   CITY: ['ADDRESS'], STATE: ['ADDRESS'], STREET: ['ADDRESS'],
   POSTCODE: ['ADDRESS'], COUNTRY: ['ADDRESS'], BUILDING: ['ADDRESS'],
   SECADDRESS: ['ADDRESS'], PASS: ['PASSWORD_FIELD'],
-  USERNAME: [], TIME: [], SEX: [], TITLE: [], GEOCOORD: [],
-  CARDISSUER: [], DRIVERLICENSE: [],
+  USERNAME: [], TIME: ['TIME'], SEX: ['SEX'], TITLE: ['TITLE'],
+  GEOCOORD: [], CARDISSUER: [], DRIVERLICENSE: [],
 };
+// Supplementary detector contributes to the gold labels below. The
+// types match what supplementary_detector.js emits.
+REGEX_GOLD_ACCEPTANCE.POSTCODE = ['ADDRESS', 'POSTCODE'];
+REGEX_GOLD_ACCEPTANCE.SECADDRESS = ['ADDRESS', 'ADDRESS_UNIT'];
+REGEX_GOLD_ACCEPTANCE.COUNTRY = ['ADDRESS', 'COUNTRY'];
+REGEX_GOLD_ACCEPTANCE.STATE = ['ADDRESS', 'US_STATE'];
+REGEX_GOLD_ACCEPTANCE.DATE = ['DOB'];
+REGEX_GOLD_ACCEPTANCE.BOD = ['DOB'];
+// Field-label-based extractors emit standard proxy types but for
+// gold labels we hadn't covered before (USERNAME).  Make those explicit:
+REGEX_GOLD_ACCEPTANCE.USERNAME = ['USERNAME', 'NAME'];
 
 // DeBERTa label → gold-label set it should be accepted as.
 // Empty array → in-scope but no specific type match (only counts under any-type).
@@ -204,15 +217,29 @@ function loadMlPreds(name, n, mapTable) {
 }
 
 // Load regex predictions (synchronous detection); attach acceptance.
+// Combines the proxy's lib/detector.js with the supplementary regex
+// pack (TIME, TITLE, SEX, DOB, POSTCODE, COUNTRY, STATE_ABBR, etc.)
 function loadRegexPreds(entries) {
-  return entries.map(e => detectPII(e.source_text).map(d => {
-    // For each regex type, find which gold labels this span could match.
-    const accepted = [];
-    for (const [goldLabel, types] of Object.entries(REGEX_GOLD_ACCEPTANCE)) {
-      if (types.includes(d.type)) accepted.push(goldLabel);
+  return entries.map(e => {
+    const text = e.source_text;
+    const all = [...detectPII(text), ...detectSupplementary(text)];
+    // Dedupe overlapping spans of the same type, prefer earlier+longer
+    all.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+    const out = [];
+    for (const d of all) {
+      let overlap = false;
+      for (const o of out) {
+        if (d.start < o.end && o.start < d.end && d.type === o.type) { overlap = true; break; }
+      }
+      if (overlap) continue;
+      const accepted = [];
+      for (const [goldLabel, types] of Object.entries(REGEX_GOLD_ACCEPTANCE)) {
+        if (types.includes(d.type)) accepted.push(goldLabel);
+      }
+      out.push({ start: d.start, end: d.end, accepted, type: d.type });
     }
-    return { start: d.start, end: d.end, accepted, type: d.type };
-  }));
+    return out;
+  });
 }
 
 // Merge regex spans + ML spans. Regex always wins on overlap.
