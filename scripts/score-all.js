@@ -186,6 +186,41 @@ function loadJsonl(p) {
   return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l));
 }
 
+// Per-label minimum confidence cutoffs for GLiNER predictions.
+// Calibrated against the threshold-0.30 score distribution: each cutoff
+// is chosen to keep most TPs while dropping the long tail of low-
+// confidence FPs. Labels not in this map use the default cutoff.
+const GLINER_LABEL_MIN_SCORE = {
+  'title':                  Infinity,
+  'building':               Infinity,
+  'username':               0.40,
+  'sex':                    0.40,
+  'first name':             0.40,
+  'last name':              0.40,
+  'person name':            0.42,
+  'state':                  0.60,
+  'country':                0.65,
+  'postal code':            0.50,
+  'city':                   0.60,
+  'street':                 0.42,
+  'address':                0.50,
+  'secondary address':      0.40,
+  'time':                   0.50,
+  'date':                   0.55,
+  'date of birth':          0.50,
+  'password':               0.42,
+  'ip address':             0.40,
+  'geographic coordinates': 0.40,
+  'id card':                0.45,
+  'passport number':        0.45,
+  'driver license':         0.45,
+  'social security number': 0.45,
+  'phone number':           0.45,
+  'email address':          0.30,
+  'card issuer':            0.45,
+};
+const GLINER_DEFAULT_MIN = 0.40;
+
 function loadMlPreds(name, n, mapTable) {
   const p = path.join(PREDS_DIR, `${name}.jsonl`);
   if (!fs.existsSync(p)) return null;
@@ -203,24 +238,12 @@ function loadMlPreds(name, n, mapTable) {
           (lblLc in mapTable) ? mapTable[lblLc] : null;
         if (accepted === undefined) { dropped++; continue; }
         const len = s.end - s.start;
-        // Quality filter: GLiNER tends to over-flag certain shapes.
-        // - "title" predictions longer than 18 chars are almost always
-        //   document titles ("Educational Virtual Reality Division"),
-        //   not honorifics — drop them.
-        // - "username" predictions shorter than 4 chars are too short
-        //   to be real usernames in this dataset; nearly all FPs.
-        // GLiNER's "title" predictions are consistently document/
-        // article titles on this dataset, not honorifics — ~1.5k FPs.
-        // Our supplementary regex already covers honorific TITLE (Mr,
-        // Lord, ...). Drop GLiNER title entirely.
-        if (lblLc === 'title') { filtered++; continue; }
+        const sc = typeof s.score === 'number' ? s.score : 1.0;
+        if (name.startsWith('gliner_')) {
+          const cut = GLINER_LABEL_MIN_SCORE[lblLc] ?? GLINER_DEFAULT_MIN;
+          if (sc < cut) { filtered++; continue; }
+        }
         if (lblLc === 'username' && len < 4) { filtered++; continue; }
-        // GLiNER's "building" is too imprecise on this dataset — gold
-        // BUILDING entries are bare 3-4 digit numbers (street numbers),
-        // ML is labelling institution names ("XYZ School") as building.
-        if (lblLc === 'building') { filtered++; continue; }
-        // GLiNER's "country" tagging "UK" / "Great Britain" creates
-        // hundreds of FPs in non-locator contexts. Filter aggressively.
         if (lblLc === 'country' && (len <= 2 || len > 25)) { filtered++; continue; }
         if (accepted === null) {
           kept++;
