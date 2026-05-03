@@ -21,6 +21,16 @@ const REVEAL_IN_RESPONSE =
 const ENABLE_MITM =
   (process.env.PII_GUARD_MITM || 'true').toLowerCase() !== 'false';
 
+// Set to true on SIGTERM so active Claude Code / SDK sessions keep working
+// during the graceful stop window (until SIGKILL fires after TimeoutStopSec).
+// In passthrough mode all requests are forwarded to upstream without any
+// PII filtering or placeholder revert.
+let passthroughMode = false;
+process.on('SIGTERM', () => {
+  passthroughMode = true;
+  console.log('[PII Guard] service stopping — passthrough mode active (requests forwarded without filtering until process exits)');
+});
+
 let promptChain = Promise.resolve();
 function serializePrompt(fn) {
   const p = promptChain.then(fn, fn);
@@ -536,6 +546,13 @@ async function handleProxyRequest(req, clientRes) {
   // Send it to the actual destination so general browsing still works.
   if (req.url.startsWith('http://') || req.url.startsWith('https://')) {
     return forwardAsProxy(req, clientRes, body);
+  }
+
+  // Passthrough mode: service is stopping (SIGTERM received). Skip all
+  // PII detection so active Claude Code sessions keep working until
+  // SIGKILL fires after TimeoutStopSec.
+  if (passthroughMode) {
+    return forwardRequest(req, clientRes, body, null);
   }
 
   if (req.method !== 'POST' || !req.url.startsWith('/v1/messages')) {
