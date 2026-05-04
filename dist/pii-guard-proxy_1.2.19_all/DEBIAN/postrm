@@ -1,0 +1,46 @@
+#!/bin/sh
+set -e
+cd /
+
+remove_mode_files() {
+  rm -f /etc/profile.d/pii-guard-claude-code.sh
+  rm -f /etc/profile.d/pii-guard-https-proxy.sh
+  rm -f /etc/chromium/policies/managed/pii-guard.json
+  rm -f /etc/opt/chrome/policies/managed/pii-guard.json
+  rm -f /etc/brave/policies/managed/pii-guard.json
+  rm -f /etc/opt/edge/policies/managed/pii-guard.json
+  rm -f /etc/pii-guard/claude-code-mode-enabled
+  rm -f /etc/pii-guard/https-proxy-mode-enabled
+  rm -f /etc/pii-guard/browser-mode-enabled
+}
+
+case "$1" in
+  purge)
+    remove_mode_files
+    if [ -f /usr/local/share/ca-certificates/pii-guard.crt ]; then
+      rm -f /usr/local/share/ca-certificates/pii-guard.crt
+      update-ca-certificates --fresh >/dev/null 2>&1 || \
+        update-ca-certificates >/dev/null 2>&1 || true
+    fi
+    rm -rf /etc/pii-guard
+    if getent passwd pii-guard >/dev/null; then
+      deluser --quiet pii-guard >/dev/null 2>&1 || true
+    fi
+    if command -v debconf-communicate >/dev/null 2>&1; then
+      echo PURGE | debconf-communicate pii-guard-proxy >/dev/null 2>&1 || true
+    fi
+    ;;
+
+  remove)
+    # Remove activation files but keep CA + cert dir until purge
+    remove_mode_files
+    ;;
+
+  upgrade|failed-upgrade|abort-install|abort-upgrade|disappear) ;;
+  *) echo "postrm called with unknown argument \`$1'" >&2; exit 1 ;;
+esac
+
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload >/dev/null 2>&1 || true
+fi
+exit 0

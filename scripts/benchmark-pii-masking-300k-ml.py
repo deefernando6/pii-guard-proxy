@@ -24,13 +24,26 @@ OUT_DIR.mkdir(exist_ok=True)
 # Labels we ask GLiNER for. Keeping the list in sync with the dataset's
 # 28 labels (mapped to natural-language phrases GLiNER understands).
 GLINER_LABELS = [
-    "person name", "first name", "last name", "title",
-    "email address", "phone number", "date of birth", "date", "time",
-    "address", "city", "state", "country", "postal code", "street",
-    "building", "secondary address", "geographic coordinates",
+    # Names — multiple synonyms catch second/third surnames better
+    "person name", "first name", "last name", "surname", "full name",
+    "middle name", "given name", "family name",
+    # Honorifics
+    "title", "honorific", "salutation",
+    # Contact
+    "email address", "phone number", "telephone",
+    # Dates
+    "date of birth", "date", "time", "birthdate",
+    # Addresses — multiple specificities
+    "address", "city", "state", "country", "postal code", "zipcode",
+    "street", "street address", "building", "building number",
+    "secondary address", "apartment", "suite", "geographic coordinates",
+    "latitude", "longitude",
+    # IDs
     "id card", "social security number", "passport number",
-    "driver license", "username", "ip address",
-    "password", "sex", "card issuer",
+    "driver license", "drivers licence", "national id",
+    # Misc
+    "username", "user name", "ip address", "ipv4", "ipv6",
+    "password", "sex", "gender", "card issuer",
 ]
 
 
@@ -79,7 +92,7 @@ def run_gliner(entries, *, name, load_onnx=False):
     for i, e in enumerate(entries):
         text = e['source_text']
         try:
-            ents = model.predict_entities(text, GLINER_LABELS, threshold=0.30)
+            ents = model.predict_entities(text, GLINER_LABELS, threshold=0.10)
         except Exception as exc:
             ents = []
             if i < 5:

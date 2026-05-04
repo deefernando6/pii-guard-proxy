@@ -1,0 +1,174 @@
+{
+  "person name": [
+    "GIVENNAME1",
+    "GIVENNAME2",
+    "LASTNAME1",
+    "LASTNAME2",
+    "LASTNAME3"
+  ],
+  "full name": [
+    "GIVENNAME1",
+    "GIVENNAME2",
+    "LASTNAME1",
+    "LASTNAME2",
+    "LASTNAME3"
+  ],
+  "first name": [
+    "GIVENNAME1",
+    "GIVENNAME2"
+  ],
+  "given name": [
+    "GIVENNAME1",
+    "GIVENNAME2"
+  ],
+  "middle name": [
+    "GIVENNAME2",
+    "GIVENNAME1"
+  ],
+  "last name": [
+    "LASTNAME1",
+    "LASTNAME2",
+    "LASTNAME3"
+  ],
+  "surname": [
+    "LASTNAME1",
+    "LASTNAME2",
+    "LASTNAME3"
+  ],
+  "family name": [
+    "LASTNAME1",
+    "LASTNAME2",
+    "LASTNAME3"
+  ],
+  "title": [
+    "TITLE"
+  ],
+  "honorific": [
+    "TITLE"
+  ],
+  "salutation": [
+    "TITLE"
+  ],
+  "email address": [
+    "EMAIL"
+  ],
+  "phone number": [
+    "TEL"
+  ],
+  "telephone": [
+    "TEL"
+  ],
+  "date of birth": [
+    "BOD"
+  ],
+  "birthdate": [
+    "BOD"
+  ],
+  "date": [
+    "DATE"
+  ],
+  "time": [
+    "TIME"
+  ],
+  "address": [
+    "STREET",
+    "BUILDING",
+    "SECADDRESS",
+    "CITY",
+    "STATE",
+    "COUNTRY",
+    "POSTCODE",
+    "GEOCOORD"
+  ],
+  "street address": [
+    "STREET",
+    "BUILDING"
+  ],
+  "city": [
+    "CITY"
+  ],
+  "state": [
+    "STATE"
+  ],
+  "country": [
+    "COUNTRY"
+  ],
+  "postal code": [
+    "POSTCODE"
+  ],
+  "zipcode": [
+    "POSTCODE"
+  ],
+  "street": [
+    "STREET"
+  ],
+  "building": [
+    "BUILDING"
+  ],
+  "building number": [
+    "BUILDING"
+  ],
+  "secondary address": [
+    "SECADDRESS"
+  ],
+  "apartment": [
+    "SECADDRESS"
+  ],
+  "suite": [
+    "SECADDRESS"
+  ],
+  "geographic coordinates": [
+    "GEOCOORD"
+  ],
+  "latitude": [
+    "GEOCOORD"
+  ],
+  "longitude": [
+    "GEOCOORD"
+  ],
+  "id card": [
+    "IDCARD"
+  ],
+  "national id": [
+    "IDCARD"
+  ],
+  "social security number": [
+    "SOCIALNUMBER"
+  ],
+  "passport number": [
+    "PASSPORT"
+  ],
+  "driver license": [
+    "DRIVERLICENSE"
+  ],
+  "drivers licence": [
+    "DRIVERLICENSE"
+  ],
+  "username": [
+    "USERNAME"
+  ],
+  "user name": [
+    "USERNAME"
+  ],
+  "ip address": [
+    "IP"
+  ],
+  "ipv4": [
+    "IP"
+  ],
+  "ipv6": [
+    "IP"
+  ],
+  "password": [
+    "PASS"
+  ],
+  "sex": [
+    "SEX"
+  ],
+  "gender": [
+    "SEX"
+  ],
+  "card issuer": [
+    "CARDISSUER"
+  ]
+}

@@ -1,0 +1,174 @@
+#!/bin/bash
+# pii-guard — control & inspect the local PII Guard proxy.
+set -eu
+
+CONFIG_DIR=/etc/pii-guard
+RUNTIME_ENV="$CONFIG_DIR/runtime.env"
+SERVICE=pii-guard-proxy.service
+
+err()   { echo "error: $*" >&2; exit 1; }
+need_root() {
+  [ "$(id -u)" -eq 0 ] || err "this command must be run as root (try: sudo pii-guard $*)"
+}
+
+usage() {
+  cat <<EOF
+Usage: pii-guard <subcommand> [args]
+
+Toggle behaviour:
+  pii-guard placeholder-replace enable    Revert [PHONE_1] etc. to real values in LLM responses (default).
+  pii-guard placeholder-replace disable   Leave placeholders visible in responses (proves anonymization).
+  pii-guard placeholder-replace status    Show whether replacement is enabled or disabled.
+
+Inspection:
+  pii-guard status                        Show service health + active modes.
+  pii-guard modes                         List which proxy modes (claude-code / https-proxy / browser) are active.
+  pii-guard log         [-n N]            Show the last N proxy log lines (default 50).
+  pii-guard log -f                        Follow the live proxy log.
+
+Reconfiguration:
+  pii-guard reconfigure                   Re-run the install-time mode multiselect.
+
+Cert helpers:
+  pii-guard trust-chrome                  Add the proxy CA to the current user's Chrome NSS DB.
+EOF
+  exit 1
+}
+
+# ─── runtime env file helpers (CLI-managed, distinct from /etc/default/pii-guard-proxy)
+read_var() {
+  # echo current value of $1 from runtime.env, or empty if unset
+  [ -f "$RUNTIME_ENV" ] || return 0
+  grep -E "^$1=" "$RUNTIME_ENV" | tail -1 | cut -d= -f2- || true
+}
+
+write_var() {
+  # write_var KEY VALUE — atomically replace or add the assignment in runtime.env
+  need_root "$@"
+  mkdir -p "$CONFIG_DIR"
+  local tmp
+  tmp="$(mktemp -p "$CONFIG_DIR")"
+  if [ -f "$RUNTIME_ENV" ]; then
+    grep -vE "^$1=" "$RUNTIME_ENV" > "$tmp" || true
+  fi
+  printf '%s=%s\n' "$1" "$2" >> "$tmp"
+  chmod 0644 "$tmp"
+  mv "$tmp" "$RUNTIME_ENV"
+}
+
+restart_service() {
+  systemctl restart "$SERVICE" \
+    || err "service restart failed — check 'journalctl -u $SERVICE'"
+}
+
+is_truthy() {
+  case "$(echo "${1:-}" | tr '[:upper:]' '[:lower:]')" in
+    ''|true|on|yes|1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ─── subcommands
+
+reload_service_config() {
+  # Send SIGHUP to the running proxy so it reloads runtime.env without a
+  # full restart. Falls back to restart if the service isn't running.
+  if systemctl is-active --quiet "$SERVICE" 2>/dev/null; then
+    systemctl kill --signal=SIGHUP "$SERVICE" 2>/dev/null \
+      || err "failed to send SIGHUP to $SERVICE"
+  fi
+}
+
+cmd_placeholder_replace() {
+  case "${1:-status}" in
+    enable|on|true)
+      write_var PII_GUARD_REVEAL true
+      reload_service_config
+      echo "Placeholder replacement: ENABLED."
+      echo "The proxy will swap placeholders back to real values in LLM responses."
+      ;;
+    disable|off|false)
+      write_var PII_GUARD_REVEAL false
+      reload_service_config
+      echo "Placeholder replacement: DISABLED."
+      echo "Placeholders like [PHONE_1] will remain visible in LLM responses (proves the LLM only saw placeholders)."
+      ;;
+    status)
+      local cur
+      cur="$(read_var PII_GUARD_REVEAL)"
+      if is_truthy "$cur"; then
+        echo "Placeholder replacement: ENABLED  (PII_GUARD_REVEAL=${cur:-true})"
+      else
+        echo "Placeholder replacement: DISABLED (PII_GUARD_REVEAL=$cur)"
+      fi
+      ;;
+    *)
+      err "unknown action '$1' — use enable | disable | status"
+      ;;
+  esac
+}
+
+cmd_status() {
+  systemctl status "$SERVICE" --no-pager 2>&1 | head -8
+  echo
+  cmd_modes
+  echo
+  cmd_placeholder_replace status
+}
+
+cmd_modes() {
+  echo "Active modes:"
+  [ -f /etc/profile.d/pii-guard-claude-code.sh ] \
+    && echo "  ✓ claude-code  (ANTHROPIC_BASE_URL set system-wide)" \
+    || echo "  ✗ claude-code"
+  [ -f /etc/profile.d/pii-guard-https-proxy.sh ] \
+    && echo "  ✓ https-proxy  (HTTPS_PROXY set system-wide)" \
+    || echo "  ✗ https-proxy"
+  if [ -f /etc/opt/chrome/policies/managed/pii-guard.json ] \
+     || [ -f /etc/chromium/policies/managed/pii-guard.json ]; then
+    echo "  ✓ browser      (Chromium-family managed policy + CA in NSS)"
+  else
+    echo "  ✗ browser"
+  fi
+}
+
+cmd_log() {
+  case "${1:-}" in
+    -f|--follow)
+      journalctl -u "$SERVICE" -f
+      ;;
+    -n)
+      [ -n "${2:-}" ] || err "-n needs a number"
+      journalctl -u "$SERVICE" --no-pager -n "$2"
+      ;;
+    "")
+      journalctl -u "$SERVICE" --no-pager -n 50
+      ;;
+    *)
+      err "unknown log option '$1'"
+      ;;
+  esac
+}
+
+cmd_reconfigure() {
+  need_root "$@"
+  dpkg-reconfigure pii-guard-proxy
+}
+
+cmd_trust_chrome() {
+  if [ ! -x /usr/bin/pii-guard-trust-chrome ]; then
+    err "/usr/bin/pii-guard-trust-chrome not found — is the package installed?"
+  fi
+  exec /usr/bin/pii-guard-trust-chrome
+}
+
+case "${1:-}" in
+  placeholder-replace) shift; cmd_placeholder_replace "$@" ;;
+  status)              cmd_status ;;
+  modes)               cmd_modes ;;
+  log)                 shift; cmd_log "$@" ;;
+  reconfigure)         cmd_reconfigure ;;
+  trust-chrome)        cmd_trust_chrome ;;
+  ""|-h|--help|help)   usage ;;
+  *)                   err "unknown subcommand '$1' (run: pii-guard --help)" ;;
+esac

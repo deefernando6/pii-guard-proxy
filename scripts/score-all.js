@@ -150,35 +150,58 @@ const OPENAI_PF_TO_GOLD = {
   'secret':          ['PASS'],
 };
 
-// GLiNER label → gold-label set.
+// GLiNER label → gold-label set. Includes synonyms so an expanded
+// inference label list (full name / surname / family name / etc.)
+// composes correctly without code changes elsewhere.
 const GLINER_TO_GOLD = {
-  'person name':           ['GIVENNAME1', 'GIVENNAME2', 'LASTNAME1', 'LASTNAME2', 'LASTNAME3'],
-  'first name':            ['GIVENNAME1', 'GIVENNAME2'],
-  'last name':             ['LASTNAME1', 'LASTNAME2', 'LASTNAME3'],
+  'person name':           ['GIVENNAME1','GIVENNAME2','LASTNAME1','LASTNAME2','LASTNAME3'],
+  'full name':             ['GIVENNAME1','GIVENNAME2','LASTNAME1','LASTNAME2','LASTNAME3'],
+  'first name':            ['GIVENNAME1','GIVENNAME2'],
+  'given name':            ['GIVENNAME1','GIVENNAME2'],
+  'middle name':           ['GIVENNAME2','GIVENNAME1'],
+  'last name':             ['LASTNAME1','LASTNAME2','LASTNAME3'],
+  'surname':               ['LASTNAME1','LASTNAME2','LASTNAME3'],
+  'family name':           ['LASTNAME1','LASTNAME2','LASTNAME3'],
   'title':                 ['TITLE'],
+  'honorific':             ['TITLE'],
+  'salutation':            ['TITLE'],
   'email address':         ['EMAIL'],
   'phone number':          ['TEL'],
+  'telephone':             ['TEL'],
   'date of birth':         ['BOD'],
+  'birthdate':             ['BOD'],
   'date':                  ['DATE'],
   'time':                  ['TIME'],
-  'address':               ['STREET', 'BUILDING', 'SECADDRESS', 'CITY', 'STATE', 'COUNTRY', 'POSTCODE'],
-  'street address':        ['STREET'],
+  'address':               ['STREET','BUILDING','SECADDRESS','CITY','STATE','COUNTRY','POSTCODE','GEOCOORD'],
+  'street address':        ['STREET','BUILDING'],
   'city':                  ['CITY'],
   'state':                 ['STATE'],
   'country':               ['COUNTRY'],
   'postal code':           ['POSTCODE'],
+  'zipcode':               ['POSTCODE'],
   'street':                ['STREET'],
   'building':              ['BUILDING'],
+  'building number':       ['BUILDING'],
   'secondary address':     ['SECADDRESS'],
+  'apartment':             ['SECADDRESS'],
+  'suite':                 ['SECADDRESS'],
   'geographic coordinates': ['GEOCOORD'],
+  'latitude':              ['GEOCOORD'],
+  'longitude':             ['GEOCOORD'],
   'id card':               ['IDCARD'],
+  'national id':           ['IDCARD'],
   'social security number': ['SOCIALNUMBER'],
   'passport number':       ['PASSPORT'],
   'driver license':        ['DRIVERLICENSE'],
+  'drivers licence':       ['DRIVERLICENSE'],
   'username':              ['USERNAME'],
+  'user name':             ['USERNAME'],
   'ip address':            ['IP'],
+  'ipv4':                  ['IP'],
+  'ipv6':                  ['IP'],
   'password':              ['PASS'],
   'sex':                   ['SEX'],
+  'gender':                ['SEX'],
   'card issuer':           ['CARDISSUER'],
 };
 
@@ -416,6 +439,12 @@ function main() {
   scenarios['regex-only']        = score(entries, i => regexPred[i]);
   if (mlInt8) scenarios['regex+gliner_small']  = score(entries, i => mergeSpans(regexPred[i], mlInt8[i]));
   if (mlBase) scenarios['regex+gliner_base']   = score(entries, i => mergeSpans(regexPred[i], mlBase[i]));
+  if (mlInt8 && mlBase) {
+    scenarios['regex+gliner_small+base'] = score(entries, i => {
+      const merged = mergeSpans(regexPred[i], mlInt8[i]);
+      return mergeSpans(merged, mlBase[i]);
+    });
+  }
   if (mlFp32) scenarios['regex+gliner_fp32']   = score(entries, i => mergeSpans(regexPred[i], mlFp32[i]));
   if (mlDeb)  scenarios['regex+deberta_base']  = score(entries, i => mergeSpans(regexPred[i], mlDeb[i]));
   if (mlOAI)  scenarios['regex+openai_pf']     = score(entries, i => mergeSpans(regexPred[i], mlOAI[i]));

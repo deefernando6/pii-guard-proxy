@@ -1,0 +1,55 @@
+Template: pii-guard-proxy/modes
+Type: multiselect
+Choices: claude-code, https-proxy, browser
+Default: claude-code
+Description: Select the proxy mode(s) to activate
+ PII Guard can route different kinds of traffic through itself. Pick one or
+ more — they all share the same anonymization map, so values stay consistent
+ between Claude Code, your CLI tools, and your browser.
+ .
+ claude-code: write /etc/profile.d/pii-guard-claude-code.sh which exports
+  ANTHROPIC_BASE_URL=http://127.0.0.1:8765 system-wide. Routes Claude Code
+  and any Anthropic SDK app through the proxy on next shell login.
+ .
+ https-proxy: write /etc/profile.d/pii-guard-https-proxy.sh which exports
+  HTTPS_PROXY, HTTP_PROXY and NODE_EXTRA_CA_CERTS system-wide. Routes any
+  CLI/SDK that respects the standard proxy env vars (curl, OpenAI SDK,
+  Gemini SDK, etc.) through the proxy.
+ .
+ browser: install a Chromium/Chrome managed-policy file pointing the
+  browser at the proxy and disabling QUIC, plus add the CA to the
+  installing user's NSS database. Chrome on this machine then routes
+  through the proxy automatically with no flags or extensions.
+
+Template: pii-guard-proxy/install-deps
+Type: boolean
+Default: true
+Description: Install missing runtime packages (nodejs, libnss3-tools) automatically?
+ The proxy needs Node.js >= 18 to run, and libnss3-tools (certutil) is
+ required if you choose the browser mode. If either is missing, postinst
+ will run apt-get to install them. Disable this only if you want to manage
+ those packages yourself.
+
+Template: pii-guard-proxy/hybrid-detection
+Type: boolean
+Default: true
+Description: Enable hybrid detection (regex + GLiNER PII Small INT8 ML)?
+ Layers a small on-device ML model on top of the regex detector to catch
+ free-form names, addresses, IDs and other entities that regex misses.
+ .
+ Adds: ~80 MB ONNX model (downloaded after install completes), python3
+ plus the gliner Python package (auto-installed). Inference runs entirely
+ on this machine; nothing is uploaded.
+ .
+ Disable this if you only want regex-based detection — the proxy still
+ runs without it.
+
+Template: pii-guard-proxy/browser-restart-warning
+Type: note
+Description: Open browsers will be closed when this install finishes
+ You selected the "browser" mode. Chrome, Chromium, Brave, and Edge only
+ read managed policy files at startup, so the installer will SIGTERM (and
+ SIGKILL after 2 s) any running instances of those browsers. Their tabs
+ will be restored when you reopen them.
+ .
+ Please save any unsaved work in those browsers before continuing.

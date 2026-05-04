@@ -1,0 +1,45 @@
+[Unit]
+Description=PII Guard Proxy - Local LLM PII anonymizer
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pii-guard
+Group=pii-guard
+EnvironmentFile=-/etc/default/pii-guard-proxy
+EnvironmentFile=-/etc/pii-guard/runtime.env
+Environment=PII_GUARD_CA_DIR=/etc/pii-guard
+Environment=PII_GUARD_HEADLESS_ACTION=anonymize
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /usr/lib/pii-guard-proxy/proxy.js
+
+# Apply / revert ALL pii-guard-proxy config artifacts in lock-step with
+# the service: the profile.d env-var snippets (claude-code & https-proxy
+# modes) and the Chromium-family managed policy (browser mode).
+# The `+` prefix makes the helper run as root (overriding User=) so it
+# can write to /etc/profile.d and /etc/{chromium,opt/chrome,...}/policies.
+# When the proxy stops, every artifact is removed and the system goes
+# back to behaving as if pii-guard-proxy was never installed (until
+# the service starts again).
+ExecStartPost=+/usr/lib/pii-guard-proxy/mode-config.sh apply
+ExecStopPost=+/usr/lib/pii-guard-proxy/mode-config.sh revert
+
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/etc/pii-guard
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
