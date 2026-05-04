@@ -1,0 +1,35 @@
+#!/bin/sh
+# Add the PII Guard CA to the current user's Chrome/Chromium NSS trust store.
+set -e
+
+# /etc/pii-guard/ca-cert.pem is mode 0750 owned by the pii-guard service
+# user, so a regular desktop user can't read it. The world-readable copy
+# in /usr/local/share/ca-certificates is identical content, so prefer it.
+for candidate in \
+    /usr/local/share/ca-certificates/pii-guard.crt \
+    /etc/pii-guard/ca-cert.pem; do
+  if [ -r "$candidate" ]; then
+    CA="$candidate"
+    break
+  fi
+done
+if [ -z "${CA:-}" ]; then
+  echo "Error: PII Guard CA file not found or not readable." >&2
+  exit 1
+fi
+
+if ! command -v certutil >/dev/null 2>&1; then
+  echo "Error: certutil not found. Install with: sudo apt install libnss3-tools" >&2
+  exit 1
+fi
+
+DB="$HOME/.pki/nssdb"
+mkdir -p "$DB"
+if [ ! -f "$DB/cert9.db" ] && [ ! -f "$DB/cert8.db" ]; then
+  certutil -d "sql:$DB" -N --empty-password
+fi
+
+certutil -d "sql:$DB" -D -n "PII Guard CA" >/dev/null 2>&1 || true
+certutil -d "sql:$DB" -A -t "C,," -n "PII Guard CA" -i "$CA"
+
+echo "Added PII Guard CA to Chrome's NSS DB ($DB). Restart Chrome to pick it up."

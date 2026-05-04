@@ -1,0 +1,40 @@
+#!/bin/sh
+set -e
+cd /
+. /usr/share/debconf/confmodule
+
+# debconf protocol: this script is invoked twice during a single apt
+# install (once by `dpkg-preconfigure` before unpack, once by dpkg right
+# before postinst). Only force-reset `seen=false` when the user has
+# explicitly run `dpkg-reconfigure`; fresh installs ask once, upgrades
+# stay silent and preserve the previous selection.
+if [ "$1" = "reconfigure" ]; then
+  db_fset pii-guard-proxy/modes seen false || true
+fi
+db_input high pii-guard-proxy/modes || true
+db_go || true
+
+# If the user picked browser mode, warn that running browsers will be
+# restarted before postinst applies the new managed policy.
+db_get pii-guard-proxy/modes
+NORMALIZED=$(printf '%s' "$RET" | tr -d ' ')
+case ",$NORMALIZED," in
+  *,browser,*)
+    if [ "$1" = "reconfigure" ]; then
+      db_fset pii-guard-proxy/browser-restart-warning seen false || true
+    fi
+    db_input critical pii-guard-proxy/browser-restart-warning || true
+    db_go || true
+    ;;
+esac
+
+# v1.1.0: detection mode is fixed (regex+supplementary+GLiNER hybrid),
+# no debconf question. install-deps remains the only auto-install
+# toggle.
+if [ "$1" = "reconfigure" ]; then
+  db_fset pii-guard-proxy/install-deps seen false || true
+fi
+db_input medium pii-guard-proxy/install-deps || true
+db_go || true
+
+exit 0

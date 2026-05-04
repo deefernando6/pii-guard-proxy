@@ -2,8 +2,11 @@
 /node_modules/
 
 # Older release artifacts — kept on disk for reference, not in git.
-dist/pii-guard-proxy_1.1*
-dist/pii-guard-proxy_1.2*
+# (1.2.0 lives on its own branch; allow it in.)
+dist/pii-guard-proxy_1.2.2*
+
+# Benchmark data — re-downloaded from huggingface.co on demand.
+scripts/data/
 
 # Local editor / OS junk
 .DS_Store

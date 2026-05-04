@@ -1,0 +1,43 @@
+#!/bin/sh
+set -e
+cd /
+. /usr/share/debconf/confmodule
+
+# debconf protocol: this script is invoked twice during a single apt
+# install (once by `dpkg-preconfigure` before unpack, once by dpkg right
+# before postinst). After the first round answers are marked `seen=true`,
+# which keeps the second round silent. Resetting `seen=false` on entry —
+# as we used to — defeats that and double-prompts every user under apt.
+#
+# Only force-reset when the user has explicitly run `dpkg-reconfigure`
+# (the case where re-prompting is the desired UX). Fresh installs ask
+# normally because there's no cached answer; upgrades stay silent and
+# preserve the existing selection. Use `sudo pii-guard reconfigure` to
+# revisit the choices later.
+if [ "$1" = "reconfigure" ]; then
+  db_fset pii-guard-proxy/modes seen false || true
+fi
+db_input high pii-guard-proxy/modes || true
+db_go || true
+
+# If the user picked browser mode, warn that running browsers will be
+# restarted before postinst applies the new managed policy.
+db_get pii-guard-proxy/modes
+NORMALIZED=$(printf '%s' "$RET" | tr -d ' ')
+case ",$NORMALIZED," in
+  *,browser,*)
+    if [ "$1" = "reconfigure" ]; then
+      db_fset pii-guard-proxy/browser-restart-warning seen false || true
+    fi
+    db_input critical pii-guard-proxy/browser-restart-warning || true
+    db_go || true
+    ;;
+esac
+
+if [ "$1" = "reconfigure" ]; then
+  db_fset pii-guard-proxy/install-deps seen false || true
+fi
+db_input medium pii-guard-proxy/install-deps || true
+db_go || true
+
+exit 0

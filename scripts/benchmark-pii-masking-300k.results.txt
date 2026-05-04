@@ -1,0 +1,69 @@
+Loading /tmp/pii-bench/english_validation.jsonl...
+Loaded 7946 entries
+Running regex on every entry...
+  done in 1.0s
+  gliner_int8: kept 33564, dropped (out-of-scope) 0, filtered (quality) 30710
+  gliner_fp32: kept 29688, dropped (out-of-scope) 0, filtered (quality) 4816
+  deberta: kept 76854, dropped (out-of-scope) 3915, filtered (quality) 2571
+  openai_pf: kept 43457, dropped (out-of-scope) 0, filtered (quality) 0
+
+## regex-only
+  STRICT  type-aware     P= 66.86%  R= 54.80%  F1= 60.24%   tp=28051  fp=13903  fn=23133
+  STRICT  any-type       P= 78.24%  R= 64.13%  F1= 70.49%   tp=32825  fp=9129  fn=18359
+  LENIENT type-aware     P= 73.74%  R= 60.44%  F1= 66.43%   tp=30938  fp=11016  fn=20246
+  LENIENT any-type       P= 86.71%  R= 71.07%  F1= 78.12%   tp=36379  fp=5575  fn=14805
+
+## regex+gliner_int8
+  STRICT  type-aware     P= 61.69%  R= 61.99%  F1= 61.84%   tp=31730  fp=19701  fn=19454
+  STRICT  any-type       P= 75.99%  R= 76.35%  F1= 76.17%   tp=39080  fp=12351  fn=12104
+  LENIENT type-aware     P= 68.31%  R= 68.64%  F1= 68.48%   tp=35134  fp=16297  fn=16050
+  LENIENT any-type       P= 84.84%  R= 85.25%  F1= 85.04%   tp=43634  fp=7797  fn=7550
+
+## regex+gliner_fp32
+  STRICT  type-aware     P= 64.15%  R= 61.34%  F1= 62.72%   tp=31397  fp=17543  fn=19787
+  STRICT  any-type       P= 77.12%  R= 73.74%  F1= 75.39%   tp=37743  fp=11197  fn=13441
+  LENIENT type-aware     P= 70.71%  R= 67.61%  F1= 69.12%   tp=34604  fp=14336  fn=16580
+  LENIENT any-type       P= 85.41%  R= 81.67%  F1= 83.50%   tp=41801  fp=7139  fn=9383
+
+## regex+deberta_base
+  STRICT  type-aware     P= 43.34%  R= 55.47%  F1= 48.66%   tp=28392  fp=37114  fn=22792
+  STRICT  any-type       P= 50.72%  R= 64.91%  F1= 56.94%   tp=33222  fp=32284  fn=17962
+  LENIENT type-aware     P= 54.84%  R= 70.19%  F1= 61.57%   tp=35925  fp=29581  fn=15259
+  LENIENT any-type       P= 69.31%  R= 88.70%  F1= 77.81%   tp=45399  fp=20107  fn=5785
+
+## regex+openai_pf
+  STRICT  type-aware     P= 59.96%  R= 64.23%  F1= 62.03%   tp=32877  fp=21950  fn=18307
+  STRICT  any-type       P= 68.90%  R= 73.81%  F1= 71.27%   tp=37777  fp=17050  fn=13407
+  LENIENT type-aware     P= 75.91%  R= 81.32%  F1= 78.52%   tp=41621  fp=13206  fn=9563
+  LENIENT any-type       P= 86.30%  R= 92.44%  F1= 89.26%   tp=47313  fp=7514  fn=3871
+
+## Per-gold-label recall (any-type, lenient)
+label             gold   regex-only  regex+gliner_int8  regex+gliner_fp32  regex+deberta_base  regex+openai_pf
+BOD               2317        98.7%        99.1%        99.0%        99.1%        99.1%
+BUILDING          1943        55.1%        71.1%        60.4%        90.8%        95.7%
+CARDISSUER           1       100.0%       100.0%       100.0%       100.0%       100.0%
+CITY              2017        55.0%        68.1%        66.2%        91.4%        88.3%
+COUNTRY           1565        82.2%        83.8%        83.6%        84.5%        82.4%
+DATE              1702        98.9%        99.2%        99.2%        99.5%        99.2%
+DRIVERLICENSE     2420        40.4%        89.8%        89.0%        90.3%        98.9%
+EMAIL             2612        99.3%        99.3%        99.3%        99.4%        99.4%
+GEOCOORD           216         0.9%        54.6%        49.5%        94.0%        99.1%
+GIVENNAME1        2019        55.8%        84.7%        68.7%        82.2%        95.7%
+GIVENNAME2         539        29.5%        66.8%        46.4%        68.3%        74.8%
+IDCARD            2656        55.2%        91.5%        88.9%        88.5%        97.9%
+IP                2166        99.7%        99.9%        99.7%        99.9%        99.8%
+LASTNAME1         2416        48.4%        76.4%        63.3%        78.5%        86.6%
+LASTNAME2          634        18.3%        56.9%        38.2%        59.0%        67.5%
+LASTNAME3          200        16.5%        58.5%        39.0%        50.5%        71.5%
+PASS              1620        58.3%        68.1%        66.1%        83.3%        97.0%
+PASSPORT          2424        91.3%        97.3%        96.7%        96.2%        99.1%
+POSTCODE          1907        67.9%        82.3%        81.1%        85.1%        94.6%
+SECADDRESS         859        46.9%        71.2%        53.2%        92.0%        96.9%
+SEX               2010        79.0%        81.3%        80.4%        82.0%        81.8%
+SOCIALNUMBER      2554        87.5%        94.8%        94.5%        98.1%        99.0%
+STATE             2002        70.6%        77.3%        76.6%        79.9%        71.8%
+STREET            1910        84.7%        87.3%        86.0%        92.3%        92.4%
+TEL               1997        97.0%        98.6%        98.3%        99.3%        99.1%
+TIME              3766        79.8%        83.1%        85.4%        87.3%        81.7%
+TITLE             1926        67.5%        74.2%        71.9%        75.3%        91.6%
+USERNAME          2786        42.5%        81.4%        70.0%        80.7%        94.4%
